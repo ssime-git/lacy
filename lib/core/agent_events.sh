@@ -70,6 +70,12 @@ def pick(obj, *names):
             return obj[name]
     return None
 
+def normalize_todo_state(value):
+    state = str(value or "").lower()
+    if state in {"true", "done", "completed", "checked", "complete", "in_progress", "in-progress", "active"}:
+        return "checked"
+    return "unchecked"
+
 def walk(value):
     if isinstance(value, list):
         for item in value:
@@ -96,6 +102,22 @@ def walk(value):
             return
         if event_type in {"tool_use", "tool-use"}:
             state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            tool_name = pick(part, "tool", "name", "title") or ""
+            if str(tool_name).lower() == "todowrite":
+                output = pick(state, "output")
+                todo_items = None
+                if isinstance(output, str):
+                    try:
+                        todo_items = json.loads(output)
+                    except Exception:
+                        todo_items = None
+                elif isinstance(output, list):
+                    todo_items = output
+                if isinstance(todo_items, list):
+                    for item in todo_items:
+                        if isinstance(item, dict):
+                            emit("todo_item", normalize_todo_state(pick(item, "status", "state", "checked", "done")), pick(item, "content", "text", "title", "message") or "")
+                    return
             detail = pick(state, "title")
             if not detail:
                 detail = json.dumps(pick(state, "input") or "", ensure_ascii=True)
@@ -131,10 +153,8 @@ def walk(value):
         state = pick(value, "state", "status", "checked", "done")
         if isinstance(state, bool):
             state = "checked" if state else "unchecked"
-        elif str(state).lower() in {"true", "done", "completed", "checked", "complete"}:
-            state = "checked"
         else:
-            state = "unchecked"
+            state = normalize_todo_state(state)
         emit("todo_item", state, pick(value, "text", "content", "message", "title") or "")
         return
     if event_type in {"action_start", "action-start", "tool_call", "tool-call", "tool_start", "tool-start", "step_start", "step-start"}:

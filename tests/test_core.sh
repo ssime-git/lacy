@@ -449,6 +449,12 @@ opencode_rendered="$(strip_ansi "$opencode_rendered")"
 assert_contains "opencode thinking rendered" "$opencode_rendered" "Analyze it"
 assert_contains "opencode final text rendered outside thinking" "$opencode_rendered" "hello"
 
+todowrite_payload='{"type":"tool_use","part":{"tool":"todowrite","state":{"output":"[{\"content\":\"inspect request\",\"status\":\"in_progress\"},{\"content\":\"read file\",\"status\":\"pending\"},{\"content\":\"done item\",\"status\":\"completed\"}]"}}}'
+normalized_todowrite="$(printf '%s\n' "$todowrite_payload" | lacy_agent_normalize_stream opencode)"
+assert_contains "todowrite emits checked todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tchecked\tinspect request'
+assert_contains "todowrite emits unchecked todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tunchecked\tread file'
+assert_contains "todowrite emits completed todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tchecked\tdone item'
+
 step_output="$(lacy_show_agent_step 'Preparing request')"
 step_output="$(strip_ansi "$step_output")"
 assert_eq "processing step output" "  > Preparing request" "$step_output"
