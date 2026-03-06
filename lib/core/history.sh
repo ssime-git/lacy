@@ -69,6 +69,12 @@ lacy_expand_file_refs() {
 
         [[ -z "$path" ]] && continue
 
+        # Reject absolute paths and directory traversal to prevent
+        # indirect prompt injection from exfiltrating sensitive files
+        [[ "$path" == /* ]] && continue
+        [[ "$path" == ~* ]] && continue
+        [[ "$path" == *..* ]] && continue
+
         # Expand readable files not yet seen
         if [[ -f "$path" && -r "$path" && "$seen" != *":${path}:"* ]]; then
             seen+=":${path}:"

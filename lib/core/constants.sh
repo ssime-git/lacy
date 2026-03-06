@@ -219,11 +219,7 @@ LACY_PREHEAT_HEALTH_CHECK_PID=""
 lacy_print_color() {
     local color="$1"
     shift
-    if [[ "$LACY_SHELL_TYPE" == "zsh" ]]; then
-        print -P "%F{${color}}$*%f"
-    else
-        printf '\e[38;5;%dm%s\e[0m\n' "$color" "$*"
-    fi
+    printf '\e[38;5;%dm%s\e[0m\n' "$color" "$*"
 }
 
 # Print colored text without trailing newline
@@ -231,11 +227,7 @@ lacy_print_color() {
 lacy_print_color_n() {
     local color="$1"
     shift
-    if [[ "$LACY_SHELL_TYPE" == "zsh" ]]; then
-        print -Pn "%F{${color}}$*%f"
-    else
-        printf '\e[38;5;%dm%s\e[0m' "$color" "$*"
-    fi
+    printf '\e[38;5;%dm%s\e[0m' "$color" "$*"
 }
 
 # Check if a value is in a list (portable array membership)

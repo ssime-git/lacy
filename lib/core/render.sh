@@ -82,10 +82,7 @@ _lacy_render_line() {
     fi
 
     # 1: markdown todo items (outside code blocks only)
-    local stripped="$line"
-    while [[ "${stripped:0:1}" == " " || "${stripped:0:1}" == $'\t' ]]; do
-        stripped="${stripped:1}"
-    done
+    local stripped="${line#"${line%%[^ $'\t']*}"}"
     local indent="${line:0:$(( ${#line} - ${#stripped} ))}"
 
     if [[ "$stripped" == "- [ ] "* ]]; then

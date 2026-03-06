@@ -118,12 +118,8 @@ lacy_shell_precmd_bash() {
 
     # Log last shell command via Bash history (no preexec equivalent in Bash)
     if [[ -n "$HISTCMD" && "$HISTCMD" != "$_LACY_LAST_HISTCMD" ]]; then
-        local _raw _num _last_cmd
-        _raw=$(HISTTIMEFORMAT='' builtin history 1 2>/dev/null)
-        # Strip leading whitespace, then strip history number, then strip whitespace
-        _raw="${_raw#"${_raw%%[![:space:]]*}"}"
-        _num="${_raw%%[[:space:]]*}"
-        _last_cmd="${_raw#"${_num}"}"
+        local _last_cmd
+        _last_cmd=$(fc -ln -1 2>/dev/null)
         _last_cmd="${_last_cmd#"${_last_cmd%%[![:space:]]*}"}"
         # Only log if it looks like a real command (not an agent query already handled)
         if [[ -n "$_last_cmd" && "$_last_cmd" != "$LACY_SHELL_PENDING_QUERY" ]]; then
@@ -337,6 +333,10 @@ lacy_shell_quit() {
 
     # Restore prompt
     lacy_shell_restore_prompt
+
+    # Remove helper functions so the shell is truly clean after deactivation
+    unset -f ask mode tool spinner quit stop 2>/dev/null
+    unset LACY_SHELL_ACTIVE
 
     echo ""
     echo "Lacy Shell deactivated."

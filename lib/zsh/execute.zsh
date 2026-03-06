@@ -357,7 +357,11 @@ lacy_shell_quit() {
 
     # Run cleanup
     lacy_shell_cleanup
-    
+
+    # Remove helper aliases so the shell is truly clean after deactivation
+    unalias ask mode tool spinner quit_lacy quit stop disable_lacy enable_lacy 2>/dev/null
+    unset LACY_SHELL_ACTIVE
+
     echo ""
     echo "Lacy Shell deactivated."
     lacy_print_color 238 "  Type 'lacy on' (or just 'lacy') to re-enter."
