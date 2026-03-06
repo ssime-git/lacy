@@ -449,11 +449,17 @@ opencode_rendered="$(strip_ansi "$opencode_rendered")"
 assert_contains "opencode thinking rendered" "$opencode_rendered" "Analyze it"
 assert_contains "opencode final text rendered outside thinking" "$opencode_rendered" "hello"
 
-todowrite_payload='{"type":"tool_use","part":{"tool":"todowrite","state":{"output":"[{\"content\":\"inspect request\",\"status\":\"in_progress\"},{\"content\":\"read file\",\"status\":\"pending\"},{\"content\":\"done item\",\"status\":\"completed\"}]"}}}'
+todowrite_payload='{"type":"tool_use","part":{"tool":"todowrite","metadata":{"todos":[{"content":"inspect request","status":"in_progress"},{"content":"read file","status":"pending"},{"content":"done item","status":"completed"}]},"state":{"output":"[{\"content\":\"inspect request\",\"status\":\"in_progress\"},{\"content\":\"read file\",\"status\":\"pending\"},{\"content\":\"done item\",\"status\":\"completed\"}]"}}}'
 normalized_todowrite="$(printf '%s\n' "$todowrite_payload" | lacy_agent_normalize_stream opencode)"
-assert_contains "todowrite emits checked todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tchecked\tinspect request'
+assert_contains "todowrite emits in-progress todo as unchecked" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tunchecked\tinspect request'
 assert_contains "todowrite emits unchecked todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tunchecked\tread file'
 assert_contains "todowrite emits completed todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tchecked\tdone item'
+
+read_payload='{"type":"tool_use","part":{"tool":"read","title":"lib/core/mcp.sh","state":{"status":"completed","input":{"filePath":"/tmp/lib/core/mcp.sh"},"output":"<content>huge file</content>"}}}'
+normalized_read="$(printf '%s\n' "$read_payload" | lacy_agent_normalize_stream opencode)"
+assert_contains "read emits action start" "$normalized_read" $'LACY_EVENT\taction_start\tread'
+assert_contains "read emits summarized action result" "$normalized_read" $'LACY_EVENT\taction_result\tread\tcompleted\tlib/core/mcp.sh'
+assert_not_contains "read does not emit full content" "$normalized_read" "<content>huge file</content>"
 
 step_output="$(lacy_show_agent_step 'Preparing request')"
 step_output="$(strip_ansi "$step_output")"

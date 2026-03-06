@@ -72,7 +72,7 @@ def pick(obj, *names):
 
 def normalize_todo_state(value):
     state = str(value or "").lower()
-    if state in {"true", "done", "completed", "checked", "complete", "in_progress", "in-progress", "active"}:
+    if state in {"true", "done", "completed", "checked", "complete"}:
         return "checked"
     return "unchecked"
 
@@ -102,15 +102,19 @@ def walk(value):
             return
         if event_type in {"tool_use", "tool-use"}:
             state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            metadata = part.get("metadata") if isinstance(part.get("metadata"), dict) else {}
             tool_name = pick(part, "tool", "name", "title") or ""
             if str(tool_name).lower() == "todowrite":
                 output = pick(state, "output")
                 todo_items = None
+                if isinstance(metadata.get("todos"), list):
+                    todo_items = metadata.get("todos")
                 if isinstance(output, str):
                     try:
                         todo_items = json.loads(output)
                     except Exception:
-                        todo_items = None
+                        if todo_items is None:
+                            todo_items = None
                 elif isinstance(output, list):
                     todo_items = output
                 if isinstance(todo_items, list):
@@ -121,11 +125,20 @@ def walk(value):
             detail = pick(state, "title")
             if not detail:
                 detail = json.dumps(pick(state, "input") or "", ensure_ascii=True)
-            summary = pick(state, "output", "title")
-            if summary is None:
-                summary = ""
-            elif not isinstance(summary, str):
-                summary = json.dumps(summary, ensure_ascii=True)
+            summary = ""
+            if str(tool_name).lower() == "read":
+                summary = pick(part, "title")
+                if not summary:
+                    file_input = pick(state.get("input", {}) if isinstance(state.get("input"), dict) else {}, "filePath", "path")
+                    summary = file_input or "read complete"
+            else:
+                summary = pick(state, "output", "title")
+                if summary is None:
+                    summary = ""
+                elif not isinstance(summary, str):
+                    summary = json.dumps(summary, ensure_ascii=True)
+                if isinstance(summary, str) and ("\n" in summary or len(summary) > 180 or "<content>" in summary):
+                    summary = pick(part, "title") or pick(state.get("input", {}) if isinstance(state.get("input"), dict) else {}, "filePath", "path") or "completed"
             emit("action_start", pick(part, "tool", "name", "title") or "", detail or "")
             emit("action_result", pick(part, "tool", "name", "title") or "", pick(state, "status") or "", summary)
             return
