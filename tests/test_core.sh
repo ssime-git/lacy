@@ -423,6 +423,18 @@ assert_eq "plain response unchanged" "plain response" "$non_thinking_output"
 normalized_json="$(printf '%s\n' '{"type":"todo_item","state":"checked","text":"json todo"}' | lacy_agent_normalize_stream opencode)"
 assert_contains "json event normalized" "$normalized_json" $'LACY_EVENT\ttodo_item\tchecked\tjson todo'
 
+opencode_payload='{"info":{"finish":"stop"},"parts":[{"type":"reasoning","text":"Analyze it"},{"type":"text","text":"hello"},{"type":"step-finish","reason":"stop"}]}'
+normalized_opencode="$(printf '%s\n' "$opencode_payload" | lacy_agent_normalize_stream opencode)"
+assert_contains "opencode reasoning starts thinking" "$normalized_opencode" $'LACY_EVENT\tthinking_start'
+assert_contains "opencode reasoning normalized" "$normalized_opencode" $'LACY_EVENT\tthinking_delta\tAnalyze it'
+assert_contains "opencode text normalized" "$normalized_opencode" $'LACY_EVENT\tfinal_text\thello'
+assert_contains "opencode terminal event normalized" "$normalized_opencode" $'LACY_EVENT\tdone'
+
+opencode_rendered="$(printf '%s\n' "$normalized_opencode" | lacy_render_response)"
+opencode_rendered="$(strip_ansi "$opencode_rendered")"
+assert_contains "opencode thinking rendered" "$opencode_rendered" "Analyze it"
+assert_contains "opencode final text rendered outside thinking" "$opencode_rendered" "hello"
+
 step_output="$(lacy_show_agent_step 'Preparing request')"
 step_output="$(strip_ansi "$step_output")"
 assert_eq "processing step output" "  > Preparing request" "$step_output"

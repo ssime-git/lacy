@@ -116,6 +116,18 @@ _lacy_resolve_tool_bin() {
     return 1
 }
 
+_lacy_timeout_bin() {
+    if command -v gtimeout >/dev/null 2>&1; then
+        printf '%s' "$(command -v gtimeout)"
+        return 0
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+        printf '%s' "$(command -v timeout)"
+        return 0
+    fi
+    return 1
+}
+
 _lacy_agent_can_use_tty() {
     [[ -t 0 || -t 1 ]]
 }
@@ -184,7 +196,13 @@ lacy_tool_cmd() {
             ;;
         opencode)
             tool_bin="$(_lacy_resolve_tool_bin opencode 2>/dev/null || printf 'opencode')"
-            echo "${tool_bin} run --format json --thinking -c"
+            local timeout_bin=""
+            timeout_bin="$(_lacy_timeout_bin 2>/dev/null || true)"
+            if [[ -n "$timeout_bin" ]]; then
+                echo "${timeout_bin} ${LACY_OPENCODE_TIMEOUT_SEC:-45} ${tool_bin} run --format json --thinking"
+            else
+                echo "${tool_bin} run --format json --thinking"
+            fi
             ;;
         pi)
             tool_bin="$(_lacy_resolve_tool_bin pi 2>/dev/null || printf 'pi')"
@@ -484,17 +502,13 @@ EOF
     fi
     lacy_show_agent_step "Querying ${tool}"
 
-    # === Preheat: lash/opencode background server ===
-    if [[ "$tool" == "lash" || "$tool" == "opencode" ]]; then
+    # === Preheat: lash background server ===
+    if [[ "$tool" == "lash" ]]; then
         if lacy_preheat_server_is_healthy || lacy_preheat_server_start "$tool"; then
             echo ""
             lacy_start_spinner
             local server_result
-            if [[ "$tool" == "opencode" ]]; then
-                server_result=$(lacy_preheat_server_query_raw "$query")
-            else
-                server_result=$(lacy_preheat_server_query "$query")
-            fi
+            server_result=$(lacy_preheat_server_query "$query")
             local exit_code=$?
             lacy_stop_spinner
             # Restore session ID from file (lost in subshell)
@@ -588,10 +602,15 @@ EOF
     echo ""
     lacy_start_spinner
     lacy_show_agent_step "Waiting for response"
+    local _lacy_done_file
+    _lacy_done_file="$(mktemp)"
     _lacy_run_tool_cmd_with_io "$cmd" "$query" "${LACY_CUSTOM_TOOL_TTY_REQUIRED:-false}" 2>&1 | {
         local _spinner_killed=false
         local _first_output_line=""
         local _line_count=0
+        local _normalized=""
+        local _done_seen=false
+        _lacy_reset_render_state
         while IFS= read -r line; do
             if ! $_spinner_killed; then
                 if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
@@ -605,8 +624,27 @@ EOF
             if (( _line_count == 1 )); then
                 _first_output_line="$line"
             fi
-            lacy_agent_normalize_line "$tool" "$line"
+            while IFS= read -r _normalized || [[ -n "$_normalized" ]]; do
+                if lacy_is_event_line "$_normalized"; then
+                    local _event_type="${_normalized#${LACY_EVENT_PREFIX}}"
+                    _event_type="${_event_type%%$'\t'*}"
+                    if [[ "$_event_type" == "done" ]]; then
+                        _done_seen=true
+                        printf '1' > "$_lacy_done_file"
+                        break
+                    fi
+                    _lacy_render_event_line "$_normalized"
+                else
+                    _lacy_render_stream_line "$_normalized"
+                fi
+            done < <(lacy_agent_normalize_line "$tool" "$line")
+            if [[ "$_done_seen" == "true" ]]; then
+                break
+            fi
         done
+        if (( _LACY_IN_THINKING_BLOCK == 1 )); then
+            _lacy_finish_thinking_block
+        fi
         if ! $_spinner_killed && [[ -n "$LACY_SPINNER_PID" ]]; then
             kill "$LACY_SPINNER_PID" 2>/dev/null
             sleep "$LACY_TERMINAL_FLUSH_DELAY"
@@ -622,6 +660,10 @@ EOF
     else
         exit_code=${PIPESTATUS[0]}
     fi
+    if [[ -f "$_lacy_done_file" && "$(cat "$_lacy_done_file" 2>/dev/null)" == "1" ]]; then
+        exit_code=0
+    fi
+    rm -f "$_lacy_done_file"
     lacy_stop_spinner
     if [[ $exit_code -eq 0 ]]; then
         _lacy_print_resume_hint "$tool"

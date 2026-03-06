@@ -82,6 +82,38 @@ def walk(value):
         return
 
     event_type = str(pick(value, "type", "event", "kind", "status") or "").lower()
+    part = value.get("part")
+    part_type = str(pick(part or {}, "type", "event", "kind", "status") or "").lower()
+
+    if tool == "opencode" and isinstance(part, dict):
+        if event_type in {"reasoning", "thinking"} or part_type in {"reasoning", "thinking"}:
+            emit("thinking_start")
+            emit("thinking_delta", pick(part, "text", "content", "message", "summary") or "")
+            emit("thinking_end")
+            return
+        if event_type in {"text", "final_text", "final-text"} or part_type in {"text", "final_text", "final-text"}:
+            emit("final_text", pick(part, "text", "content", "message", "summary") or "")
+            return
+        if event_type in {"tool_use", "tool-use"}:
+            state = part.get("state") if isinstance(part.get("state"), dict) else {}
+            detail = pick(state, "title")
+            if not detail:
+                detail = json.dumps(pick(state, "input") or "", ensure_ascii=True)
+            summary = pick(state, "output", "title")
+            if summary is None:
+                summary = ""
+            elif not isinstance(summary, str):
+                summary = json.dumps(summary, ensure_ascii=True)
+            emit("action_start", pick(part, "tool", "name", "title") or "", detail or "")
+            emit("action_result", pick(part, "tool", "name", "title") or "", pick(state, "status") or "", summary)
+            return
+        if event_type in {"step_finish", "step-finish"} or part_type in {"step_finish", "step-finish"}:
+            reason = str(pick(part, "reason", "status", "state") or "").lower()
+            if reason in {"stop", "end_turn", "end-turn"}:
+                emit("done")
+            elif reason:
+                emit("status", f"step finish: {reason}")
+            return
 
     if event_type in {"thinking_start", "thinking-start", "reasoning_start", "reasoning-start"}:
         emit("thinking_start")
@@ -123,10 +155,17 @@ def walk(value):
         texts = []
         for part in parts:
             if isinstance(part, dict):
-                if str(part.get("type", "")).lower() in {"text", "output_text"} and part.get("text"):
+                part_type = str(part.get("type", "")).lower()
+                if part_type in {"text", "output_text"} and part.get("text"):
                     texts.append(part["text"])
-                elif str(part.get("type", "")).lower() in {"thinking", "reasoning"} and part.get("text"):
+                elif part_type in {"thinking", "reasoning"} and part.get("text"):
+                    emit("thinking_start")
                     emit("thinking_delta", part["text"])
+                    emit("thinking_end")
+                elif part_type in {"step-finish", "step_finish"}:
+                    reason = str(part.get("reason", "")).lower()
+                    if reason in {"stop", "end_turn", "end-turn"}:
+                        emit("done")
         if texts:
             emit("final_text", "\n".join(texts))
             return

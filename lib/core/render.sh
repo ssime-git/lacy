@@ -131,6 +131,15 @@ _lacy_render_event_line() {
     fi
 
     case "$type" in
+        thinking_start|thinking_delta|thinking_end) ;;
+        *)
+            if (( _LACY_IN_THINKING_BLOCK == 1 )); then
+                _lacy_finish_thinking_block
+            fi
+            ;;
+    esac
+
+    case "$type" in
         status)
             lacy_show_agent_step "$arg1"
             ;;
@@ -171,6 +180,8 @@ _lacy_render_event_line() {
             ;;
         error)
             lacy_print_color 196 "$arg1"
+            ;;
+        done)
             ;;
         *)
             _lacy_render_stream_line "$event_line"
