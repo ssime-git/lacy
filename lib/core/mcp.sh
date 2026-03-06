@@ -241,7 +241,16 @@ except: pass" 2>/dev/null)
 
 # Send query to AI agent (configurable tool or fallback)
 lacy_shell_query_agent() {
-    local query="$1"
+    local query
+    # Feature 2: expand @file references in the query
+    query=$(lacy_expand_file_refs "$1")
+    # Show which files are being included (before spinner starts)
+    local _f
+    for _f in "${LACY_EXPANDED_FILES[@]}"; do
+        lacy_print_color 238 "  @${_f}"
+    done
+    # Feature 5: enrich with recent shell history context
+    query=$(lacy_build_context_query "$query")
     local tool="${LACY_ACTIVE_TOOL}"
 
     # Auto-detect if not set
@@ -385,7 +394,7 @@ EOF
             lacy_preheat_server_restore_session
             if [[ $exit_code -eq 0 && -n "$server_result" ]]; then
                 while [[ "$server_result" == $'\n'* ]]; do server_result="${server_result#$'\n'}"; done
-                printf '%s\n' "$server_result"
+                printf '%s\n' "$server_result" | lacy_render_response
                 _lacy_print_resume_hint "$tool"
                 echo ""
                 return 0
@@ -417,9 +426,9 @@ EOF
             result_text=$(lacy_preheat_claude_extract_result "$json_output")
             while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
             if [[ -n "$result_text" ]]; then
-                printf '%s\n' "$result_text"
+                printf '%s\n' "$result_text" | lacy_render_response
             else
-                printf '%s\n' "$json_output"
+                printf '%s\n' "$json_output" | lacy_render_response
             fi
             lacy_preheat_claude_capture_session "$json_output"
             _lacy_print_resume_hint "$tool"
@@ -446,9 +455,9 @@ EOF
                 result_text=$(lacy_preheat_claude_extract_result "$json_output")
                 while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
                 if [[ -n "$result_text" ]]; then
-                    printf '%s\n' "$result_text"
+                    printf '%s\n' "$result_text" | lacy_render_response
                 else
-                    printf '%s\n' "$json_output"
+                    printf '%s\n' "$json_output" | lacy_render_response
                 fi
                 lacy_preheat_claude_capture_session "$json_output"
                 _lacy_print_resume_hint "$tool"
@@ -490,9 +499,9 @@ EOF
             if (( _line_count > 1 )); then
                 # Multi-line output — not a JSON error blob, flush everything
                 if [[ $_line_count -eq 2 ]]; then
-                    printf '%s\n' "$_full_output"
+                    _lacy_render_line "$_full_output"
                 fi
-                printf '%s\n' "$line"
+                _lacy_render_line "$line"
             fi
         done
         if ! $_spinner_killed && [[ -n "$LACY_SPINNER_PID" ]]; then
@@ -502,7 +511,7 @@ EOF
         fi
         # Single-line output — check if it's a JSON error
         if (( _line_count <= 1 )); then
-            lacy_format_tool_error "$_full_output" "$tool" || printf '%s\n' "$_full_output"
+            lacy_format_tool_error "$_full_output" "$tool" || _lacy_render_line "$_full_output"
         fi
     }
     local exit_code

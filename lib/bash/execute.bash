@@ -108,10 +108,25 @@ lacy_shell_execute_agent() {
     fi
 }
 
+# Last HISTCMD value logged — prevents logging the same entry twice
+_LACY_LAST_HISTCMD=""
+
 # Precmd equivalent for Bash — called via PROMPT_COMMAND
 lacy_shell_precmd_bash() {
     # Capture exit code immediately
     _lacy_last_exit=$?
+
+    # Log last shell command via Bash history (no preexec equivalent in Bash)
+    if [[ -n "$HISTCMD" && "$HISTCMD" != "$_LACY_LAST_HISTCMD" ]]; then
+        local _last_cmd
+        _last_cmd=$(fc -ln -1 2>/dev/null)
+        _last_cmd="${_last_cmd#"${_last_cmd%%[![:space:]]*}"}"
+        # Only log if it looks like a real command (not an agent query already handled)
+        if [[ -n "$_last_cmd" && "$_last_cmd" != "$LACY_SHELL_PENDING_QUERY" ]]; then
+            lacy_history_log "$_last_cmd" "$_lacy_last_exit"
+        fi
+        _LACY_LAST_HISTCMD="$HISTCMD"
+    fi
 
     # Ensure terminal state is clean
     printf '\e[?25h'   # Cursor visible
@@ -316,28 +331,19 @@ lacy_shell_quit() {
     # Stop preheated servers
     lacy_preheat_cleanup
 
-    # Unset functions used as commands
-    unset -f ask mode tool spinner quit stop 2>/dev/null
-
-    # Define a `lacy` function so user can re-enter by typing `lacy`
-    local _ldir="$LACY_SHELL_DIR"
-    eval "lacy() {
-        if [[ \$# -eq 0 ]]; then
-            unset -f lacy 2>/dev/null
-            LACY_SHELL_LOADED=false
-            source \"${_ldir}/lacy.plugin.bash\"
-        else
-            command lacy \"\$@\"
-        fi
-    }"
-
     # Restore prompt
     lacy_shell_restore_prompt
 
+    # Remove helper functions so the shell is truly clean after deactivation
+    unset -f ask mode tool spinner quit stop 2>/dev/null
+    unset LACY_SHELL_ACTIVE
+
+    echo ""
+    echo "Lacy Shell deactivated."
+    printf '\e[38;5;238m  Type '"'"'lacy on'"'"' (or just '"'"'lacy'"'"') to re-enter.\e[0m\n'
     echo ""
 
     LACY_SHELL_QUITTING=false
-    LACY_SHELL_LOADED=false
 }
 
 # Conversation management
