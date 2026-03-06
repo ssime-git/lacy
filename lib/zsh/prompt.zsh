@@ -37,6 +37,11 @@ lacy_shell_init_prompt_once() {
 
 # Update right prompt with mode indicator
 lacy_shell_update_rprompt() {
+    if [[ "${LACY_SIMPLE_PROMPT:-false}" == "true" ]]; then
+        RPS1=""
+        return
+    fi
+
     local mode_text mode_color
     case "$LACY_SHELL_CURRENT_MODE" in
         "shell")

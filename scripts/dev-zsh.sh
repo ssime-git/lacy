@@ -42,9 +42,6 @@ cat > "$DEV_HOME/.zshrc" <<EOF
 export LACY_SHELL_HOME="$DEV_LACY_HOME"
 export LACY_AUTO_START=true
 source "$REPO_DIR/lacy.plugin.zsh"
-if typeset -f lacy_shell_activate >/dev/null 2>&1; then
-    lacy_shell_activate
-fi
 EOF
 
 echo "Repo:      $REPO_DIR"

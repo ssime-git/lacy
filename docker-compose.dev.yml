@@ -10,6 +10,7 @@ services:
       LACY_DEV_HOME: /tmp/lacy-docker-home
       LACY_DEV_TOOL: custom
       LACY_DEV_CUSTOM_COMMAND: /workspace/scripts/fake-agent.sh
+      LACY_SIMPLE_PROMPT: "true"
     volumes:
       - .:/workspace
     command: >
@@ -22,8 +23,11 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     working_dir: /workspace
+    stdin_open: true
+    tty: true
     environment:
       LACY_SMOKE_HOME: /tmp/lacy-smoke-home
+      LACY_SIMPLE_PROMPT: "true"
     volumes:
       - .:/workspace
     command: >

@@ -30,21 +30,8 @@ run_smoke() {
         HOME="$DEV_HOME" \
         ZDOTDIR="$DEV_HOME" \
         LACY_SHELL_HOME="$LACY_HOME" \
-        LACY_AUTO_START=true \
-        zsh -i -c "source '$REPO_DIR/lacy.plugin.zsh'; lacy_shell_activate >/dev/null 2>&1 || true; lacy_shell_query_agent 'inspect @README.md and @lib/core'"
+        LACY_AUTO_START=false \
+        zsh -i -c "source '$REPO_DIR/lacy.plugin.zsh'; lacy_shell_activate; lacy_shell_query_agent 'inspect @README.md and @lib/core'"
 }
-
-if [[ "${1:-}" == "--inner" ]]; then
-    run_smoke
-    exit $?
-fi
-
-if command -v script >/dev/null 2>&1; then
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        exec script -q /dev/null bash -lc "cd '$REPO_DIR' && ./scripts/smoke-agent.sh --inner"
-    else
-        exec script -qec "cd '$REPO_DIR' && ./scripts/smoke-agent.sh --inner" /dev/null
-    fi
-fi
 
 run_smoke
