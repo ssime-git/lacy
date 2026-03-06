@@ -122,17 +122,26 @@ lacy_append_reference_note() {
     LACY_EXPANDED_REFS+=("$note")
 }
 
-lacy_append_file_reference() {
-    local result_var="$1"
-    local ref_path="$2"
-    local label="${3:-$ref_path}"
-    local contents
-    contents=$(head -c "${LACY_REF_MAX_BYTES:-8192}" "$ref_path" 2>/dev/null)
+lacy_ref_file_preview() {
+    local ref_path="$1"
+    local max_lines="${LACY_REF_PREVIEW_LINES:-20}"
+    local line_count=""
 
-    printf -v "$result_var" '%s\n%s\n```text\n%s\n```\n' \
-        "${!result_var}" \
-        "- FILE @${label}" \
-        "$contents"
+    line_count=$(wc -l < "$ref_path" 2>/dev/null | tr -d ' ')
+    printf 'Preview (%s lines shown, file has %s total lines):\n' "$max_lines" "${line_count:-0}"
+    awk -v max_lines="$max_lines" 'NR <= max_lines { printf "%d: %s\n", NR, $0 }' "$ref_path" 2>/dev/null
+}
+
+lacy_ref_file_diff() {
+    local ref_path="$1"
+    local diff_output=""
+
+    command -v git >/dev/null 2>&1 || return 1
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+
+    diff_output=$(git --no-pager diff --no-ext-diff --no-color --unified="${LACY_REF_DIFF_CONTEXT:-3}" -- "$ref_path" 2>/dev/null)
+    [[ -n "$diff_output" ]] || return 1
+    printf '%s\n' "$diff_output"
 }
 
 lacy_collect_directory_entries() {
@@ -163,8 +172,18 @@ lacy_expand_references() {
             lacy_append_reference_note "file:${ref_path}"
             refs_block+=$'\n'"- FILE @${ref_path}"$'\n'
             refs_block+="\`\`\`text"$'\n'
-            refs_block+="$(head -c "${LACY_REF_MAX_BYTES:-8192}" "$ref_path" 2>/dev/null)"$'\n'
+            refs_block+="$(lacy_ref_file_preview "$ref_path")"$'\n'
             refs_block+="\`\`\`"$'\n'
+            if lacy_is_text_file "$ref_path"; then
+                local file_diff=""
+                file_diff="$(lacy_ref_file_diff "$ref_path" 2>/dev/null || true)"
+                if [[ -n "$file_diff" ]]; then
+                    refs_block+="Diff:"$'\n'
+                    refs_block+="\`\`\`diff"$'\n'
+                    refs_block+="$file_diff"$'\n'
+                    refs_block+="\`\`\`"$'\n'
+                fi
+            fi
             continue
         fi
 
@@ -203,7 +222,7 @@ lacy_expand_references() {
                 fi
                 refs_block+="  - ${file}"$'\n'
                 refs_block+="\`\`\`text"$'\n'
-                refs_block+="$(head -c "${LACY_REF_MAX_BYTES:-8192}" "$file" 2>/dev/null)"$'\n'
+                refs_block+="$(lacy_ref_file_preview "$file")"$'\n'
                 refs_block+="\`\`\`"$'\n'
                 excerpt_count=$(( excerpt_count + 1 ))
                 if (( excerpt_count >= ${LACY_REF_DIR_MAX_FILES:-12} )); then

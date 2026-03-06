@@ -368,6 +368,12 @@ printf 'root file\n' > "$TEST_TMPDIR/root.txt"
 
 (
     cd "$TEST_TMPDIR" || exit 1
+    git init >/dev/null 2>&1
+    git config user.email test@example.com
+    git config user.name test
+    git add root.txt refdir/file.txt refdir/nested/inner.txt
+    git commit -m "init" >/dev/null 2>&1
+    printf 'root file\nsecond line changed\n' > "$TEST_TMPDIR/root.txt"
     lacy_expand_references 'check @root.txt and @refdir please'
     expanded_refs="$LACY_EXPANDED_QUERY"
     assert_contains "file ref metadata" "$expanded_refs" "FILE @root.txt"
@@ -376,6 +382,10 @@ printf 'root file\n' > "$TEST_TMPDIR/root.txt"
     assert_contains "query preserved after refs" "$expanded_refs" "check @root.txt and @refdir please"
     assert_contains "expanded refs state includes file" "${LACY_EXPANDED_REFS[*]}" "file:root.txt"
     assert_contains "expanded refs state includes dir" "${LACY_EXPANDED_REFS[*]}" "dir:refdir"
+    assert_contains "file ref preview lines" "$expanded_refs" "Preview ("
+    assert_not_contains "file ref no raw full dump marker" "$expanded_refs" "alpha"$'\n'"beta"$'\n'"gamma"
+    assert_contains "file ref includes diff" "$expanded_refs" "Diff:"
+    assert_contains "diff contains changed line" "$expanded_refs" "+second line changed"
 
     scan_refs="$(lacy_ref_scan 'look at @root.txt, @"refdir/nested/inner.txt" and @refdir please')"
     assert_contains "scan sees root file" "$scan_refs" $'\t@root.txt\troot.txt'
@@ -404,17 +414,21 @@ event_output="$(printf '%s\n' \
     $'LACY_EVENT\tthinking_delta\tstep 1' \
     $'LACY_EVENT\tthinking_end' \
     $'LACY_EVENT\ttodo_item\tunchecked\tinspect request' \
+    $'LACY_EVENT\ttodo_item\tunchecked\tread file' \
+    $'LACY_EVENT\ttodo_item\tchecked\tinspect request' \
     $'LACY_EVENT\ttodo_item\tchecked\tdone item' \
     $'LACY_EVENT\taction_start\tread_file\tREADME.md' \
     $'LACY_EVENT\taction_result\tread_file\tok\t42 lines' \
     $'LACY_EVENT\tfinal_text\tplain response' | lacy_render_response)"
-event_output="$(strip_ansi "$event_output")"
-assert_contains "event status rendered" "$event_output" "Preparing request"
-assert_contains "event thinking rendered" "$event_output" "Thinking"
-assert_contains "event todo unchecked rendered" "$event_output" "☐ inspect request"
-assert_contains "event todo checked rendered" "$event_output" "☑ done item"
-assert_contains "event action rendered" "$event_output" "read_file [ok]: 42 lines"
-assert_contains "event final text rendered" "$event_output" "plain response"
+event_output_plain="$(strip_ansi "$event_output")"
+assert_contains "event status rendered" "$event_output_plain" "Preparing request"
+assert_contains "event thinking rendered" "$event_output_plain" "Thinking"
+assert_contains "event todo updated rendered checked" "$event_output_plain" "☑ inspect request"
+assert_contains "event second todo rendered" "$event_output_plain" "☐ read file"
+assert_contains "event todo checked rendered" "$event_output_plain" "☑ done item"
+assert_contains "event action rendered" "$event_output_plain" "read_file [ok]: 42 lines"
+assert_contains "event final text rendered" "$event_output_plain" "plain response"
+assert_contains "event todo redraw uses cursor controls" "$event_output" $'\033[1A\033[2K\r'
 
 non_thinking_output="$(printf '%s\n' 'plain response' | lacy_render_response)"
 non_thinking_output="$(strip_ansi "$non_thinking_output")"
