@@ -202,11 +202,13 @@ lacy_tool_cmd() {
         opencode)
             tool_bin="$(_lacy_resolve_tool_bin opencode 2>/dev/null || printf 'opencode')"
             local timeout_bin=""
+            local session_args=""
             timeout_bin="$(_lacy_timeout_bin 2>/dev/null || true)"
+            session_args="$(lacy_preheat_opencode_build_session_args 2>/dev/null || true)"
             if [[ -n "$timeout_bin" ]]; then
-                echo "${timeout_bin} ${LACY_OPENCODE_TIMEOUT_SEC:-45} ${tool_bin} run --format json --thinking"
+                echo "${timeout_bin} ${LACY_OPENCODE_TIMEOUT_SEC:-45} ${tool_bin} run --format json --thinking ${session_args}"
             else
-                echo "${tool_bin} run --format json --thinking"
+                echo "${tool_bin} run --format json --thinking ${session_args}"
             fi
             ;;
         pi)
@@ -244,8 +246,8 @@ lacy_resume_cmd() {
                 echo "lash --session $LACY_PREHEAT_SERVER_SESSION_ID"
             ;;
         opencode)
-            [[ -n "$LACY_PREHEAT_SERVER_SESSION_ID" ]] && \
-                echo "opencode --session $LACY_PREHEAT_SERVER_SESSION_ID"
+            [[ -n "$LACY_PREHEAT_OPENCODE_SESSION_ID" ]] && \
+                echo "opencode run --session $LACY_PREHEAT_OPENCODE_SESSION_ID"
             ;;
         gemini)   echo "gemini --resume" ;;
         codex)    echo "codex exec resume --last" ;;
@@ -615,28 +617,48 @@ EOF
     _lacy_done_file="$(mktemp)"
     _lacy_run_tool_cmd_with_io "$cmd" "$query" "${LACY_CUSTOM_TOOL_TTY_REQUIRED:-false}" "$_io_override" 2>&1 | {
         local _spinner_killed=false
+        local _spinner_detached=false
         local _first_output_line=""
         local _line_count=0
         local _normalized=""
         local _done_seen=false
         _lacy_reset_render_state
         while IFS= read -r line; do
-            if ! $_spinner_killed; then
-                if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
-                    kill "$LACY_SPINNER_PID" 2>/dev/null
-                    sleep "$LACY_TERMINAL_FLUSH_DELAY"
-                    printf '\e[2K\r\e[?25h\e[?7h'
-                fi
-                _spinner_killed=true
+            if [[ "$tool" == "opencode" ]]; then
+                lacy_preheat_opencode_capture_session "$line"
             fi
             (( _line_count++ ))
             if (( _line_count == 1 )); then
                 _first_output_line="$line"
             fi
             while IFS= read -r _normalized || [[ -n "$_normalized" ]]; do
+                local _event_type=""
+                local _keep_spinner=false
                 if lacy_is_event_line "$_normalized"; then
-                    local _event_type="${_normalized#${LACY_EVENT_PREFIX}}"
+                    _event_type="${_normalized#${LACY_EVENT_PREFIX}}"
                     _event_type="${_event_type%%$'\t'*}"
+                    case "$_event_type" in
+                        status|thinking_start|thinking_delta|thinking_end)
+                            _keep_spinner=true
+                            ;;
+                    esac
+                fi
+                if ! $_spinner_killed; then
+                    if [[ "$_keep_spinner" == "true" ]]; then
+                        if ! $_spinner_detached; then
+                            printf '\n'
+                            _spinner_detached=true
+                        fi
+                    else
+                        if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
+                            kill "$LACY_SPINNER_PID" 2>/dev/null
+                            sleep "$LACY_TERMINAL_FLUSH_DELAY"
+                            printf '\e[2K\r\e[?25h\e[?7h'
+                        fi
+                        _spinner_killed=true
+                    fi
+                fi
+                if lacy_is_event_line "$_normalized"; then
                     if [[ "$_event_type" == "done" ]]; then
                         _done_seen=true
                         printf '1' > "$_lacy_done_file"

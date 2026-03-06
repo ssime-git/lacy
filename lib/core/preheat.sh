@@ -13,6 +13,8 @@ LACY_PREHEAT_SERVER_SESSION_ID=""
 LACY_PREHEAT_SERVER_SESSION_FILE="$LACY_SHELL_HOME/.server_session_id"
 LACY_PREHEAT_CLAUDE_SESSION_ID=""
 LACY_PREHEAT_SESSION_FILE="$LACY_SHELL_HOME/.claude_session_id"
+LACY_PREHEAT_OPENCODE_SESSION_ID=""
+LACY_PREHEAT_OPENCODE_SESSION_FILE="$LACY_SHELL_HOME/.opencode_session_id"
 
 # ============================================================================
 # Background Server (lash + opencode)
@@ -298,11 +300,82 @@ lacy_preheat_claude_reset_session() {
 }
 
 # ============================================================================
+# Opencode Session Reuse
+# ============================================================================
+
+lacy_preheat_opencode_restore_session() {
+    if [[ -f "$LACY_PREHEAT_OPENCODE_SESSION_FILE" ]]; then
+        LACY_PREHEAT_OPENCODE_SESSION_ID=$(cat "$LACY_PREHEAT_OPENCODE_SESSION_FILE" 2>/dev/null)
+    fi
+}
+
+lacy_preheat_opencode_build_session_args() {
+    if [[ -n "$LACY_PREHEAT_OPENCODE_SESSION_ID" ]]; then
+        printf '%s' "--session ${LACY_PREHEAT_OPENCODE_SESSION_ID}"
+    fi
+}
+
+lacy_preheat_opencode_capture_session() {
+    local payload="$1"
+    local session_id=""
+
+    command -v python3 >/dev/null 2>&1 || return 0
+
+    session_id=$(LACY_OPENCODE_PAYLOAD="$payload" python3 - <<'PY'
+import json
+import os
+
+payload = os.environ.get("LACY_OPENCODE_PAYLOAD", "")
+
+def walk(value):
+    if isinstance(value, dict):
+        for key in ("sessionID", "sessionId", "session_id"):
+            found = value.get(key)
+            if isinstance(found, str) and found:
+                return found
+        for child in value.values():
+            found = walk(child)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = walk(child)
+            if found:
+                return found
+    return ""
+
+for raw_line in payload.splitlines():
+    line = raw_line.strip()
+    if not line:
+        continue
+    try:
+        found = walk(json.loads(line))
+    except Exception:
+        continue
+    if found:
+        print(found)
+        break
+PY
+)
+
+    if [[ -n "$session_id" ]]; then
+        LACY_PREHEAT_OPENCODE_SESSION_ID="$session_id"
+        printf '%s\n' "$session_id" > "$LACY_PREHEAT_OPENCODE_SESSION_FILE"
+    fi
+}
+
+lacy_preheat_opencode_reset_session() {
+    LACY_PREHEAT_OPENCODE_SESSION_ID=""
+    rm -f "$LACY_PREHEAT_OPENCODE_SESSION_FILE"
+}
+
+# ============================================================================
 # Lifecycle
 # ============================================================================
 
 lacy_preheat_init() {
     lacy_preheat_claude_restore_session
+    lacy_preheat_opencode_restore_session
 
     if [[ "$LACY_PREHEAT_EAGER" == "true" ]]; then
         local tool="${LACY_ACTIVE_TOOL}"

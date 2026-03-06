@@ -36,6 +36,7 @@ source "$REPO_DIR/lib/core/refs.sh"
 source "$REPO_DIR/lib/core/agent_events.sh"
 source "$REPO_DIR/lib/core/history.sh"
 source "$REPO_DIR/lib/core/render.sh"
+source "$REPO_DIR/lib/core/preheat.sh"
 
 # Test counter
 PASS=0
@@ -443,6 +444,7 @@ assert_contains "opencode reasoning starts thinking" "$normalized_opencode" $'LA
 assert_contains "opencode reasoning normalized" "$normalized_opencode" $'LACY_EVENT\tthinking_delta\tAnalyze it'
 assert_contains "opencode text normalized" "$normalized_opencode" $'LACY_EVENT\tfinal_text\thello'
 assert_contains "opencode terminal event normalized" "$normalized_opencode" $'LACY_EVENT\tdone'
+assert_not_contains "opencode reasoning stays open until non-thinking event" "$normalized_opencode" $'LACY_EVENT\tthinking_end'
 
 opencode_rendered="$(printf '%s\n' "$normalized_opencode" | lacy_render_response)"
 opencode_rendered="$(strip_ansi "$opencode_rendered")"
@@ -460,6 +462,18 @@ normalized_read="$(printf '%s\n' "$read_payload" | lacy_agent_normalize_stream o
 assert_contains "read emits action start" "$normalized_read" $'LACY_EVENT\taction_start\tread'
 assert_contains "read emits summarized action result" "$normalized_read" $'LACY_EVENT\taction_result\tread\tcompleted\tlib/core/mcp.sh'
 assert_not_contains "read does not emit full content" "$normalized_read" "<content>huge file</content>"
+
+TEST_TMP_HOME="$(mktemp -d)"
+LACY_SHELL_HOME="$TEST_TMP_HOME"
+LACY_PREHEAT_OPENCODE_SESSION_FILE="$TEST_TMP_HOME/.opencode_session_id"
+LACY_PREHEAT_OPENCODE_SESSION_ID=""
+lacy_preheat_opencode_capture_session '{"type":"step_start","sessionID":"ses_abc123","part":{"type":"step-start"}}'
+assert_eq "opencode session captured" "ses_abc123" "$LACY_PREHEAT_OPENCODE_SESSION_ID"
+assert_contains "opencode session args include session id" "$(lacy_preheat_opencode_build_session_args)" "--session ses_abc123"
+LACY_PREHEAT_OPENCODE_SESSION_ID=""
+lacy_preheat_opencode_restore_session
+assert_eq "opencode session restored from file" "ses_abc123" "$LACY_PREHEAT_OPENCODE_SESSION_ID"
+rm -rf "$TEST_TMP_HOME"
 
 step_output="$(lacy_show_agent_step 'Preparing request')"
 step_output="$(strip_ansi "$step_output")"

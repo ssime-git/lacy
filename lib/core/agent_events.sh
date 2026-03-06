@@ -95,7 +95,6 @@ def walk(value):
         if event_type in {"reasoning", "thinking"} or part_type in {"reasoning", "thinking"}:
             emit("thinking_start")
             emit("thinking_delta", pick(part, "text", "content", "message", "summary") or "")
-            emit("thinking_end")
             return
         if event_type in {"text", "final_text", "final-text"} or part_type in {"text", "final_text", "final-text"}:
             emit("final_text", pick(part, "text", "content", "message", "summary") or "")
@@ -194,7 +193,8 @@ def walk(value):
                 elif part_type in {"thinking", "reasoning"} and part.get("text"):
                     emit("thinking_start")
                     emit("thinking_delta", part["text"])
-                    emit("thinking_end")
+                    if tool != "opencode":
+                        emit("thinking_end")
                 elif part_type in {"step-finish", "step_finish"}:
                     reason = str(part.get("reason", "")).lower()
                     if reason in {"stop", "end_turn", "end-turn"}:
