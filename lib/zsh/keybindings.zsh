@@ -97,6 +97,26 @@ zle -N zle-line-pre-redraw lacy_shell_line_pre_redraw
 # complete it as a filename (stripping the @ for matching, re-adding it
 # when inserting). Falls through to normal ZSH completion otherwise.
 # ============================================================================
+lacy_shell_longest_common_prefix() {
+    local -a values
+    values=("$@")
+
+    (( ${#values[@]} > 0 )) || return 1
+
+    local prefix="${values[1]}"
+    local value i
+    for value in "${values[@]:1}"; do
+        i=0
+        while (( i < ${#prefix} && i < ${#value} )) && [[ "${prefix:$i:1}" == "${value:$i:1}" ]]; do
+            (( i++ ))
+        done
+        prefix="${prefix:0:$i}"
+        [[ -n "$prefix" ]] || break
+    done
+
+    printf '%s' "$prefix"
+}
+
 lacy_shell_at_complete_widget() {
     # Extract the word up to the cursor
     local before_cursor="${BUFFER[1,$CURSOR]}"
@@ -122,7 +142,15 @@ lacy_shell_at_complete_widget() {
             BUFFER="${BUFFER[1,$offset]}@${insert}${BUFFER[$(( CURSOR + 1 )),-1]}"
             CURSOR=$(( offset + ${#insert} + 1 ))
         else
-            # Multiple matches — list them in dim gray and let user keep typing
+            # Multiple matches — insert the shared prefix first, then list choices.
+            local common_prefix
+            common_prefix="$(lacy_shell_longest_common_prefix "${matches[@]}")"
+            if [[ -n "$common_prefix" && "$common_prefix" != "$prefix" ]]; then
+                local offset=$(( CURSOR - ${#cur_word} ))
+                BUFFER="${BUFFER[1,$offset]}@${common_prefix}${BUFFER[$(( CURSOR + 1 )),-1]}"
+                CURSOR=$(( offset + ${#common_prefix} + 1 ))
+            fi
+
             local display
             display=$(printf '\e[38;5;238m  @%s\e[0m\n' "${matches[@]}")
             zle -M "$display"
