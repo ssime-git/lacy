@@ -152,8 +152,13 @@ _lacy_run_tool_cmd_with_io() {
     local cmd_str="$1"
     local query="$2"
     local tty_required="${3:-false}"
+    local io_override="${4:-auto}"
     local io_mode
-    io_mode="$(_lacy_agent_stdio_mode)"
+    if [[ "$io_override" == "auto" ]]; then
+        io_mode="$(_lacy_agent_stdio_mode)"
+    else
+        io_mode="$io_override"
+    fi
 
     if [[ "$tty_required" == "true" && "$io_mode" != "interactive-pty" ]]; then
         printf '%s\n' "Agent requires an interactive TTY. Retry from an interactive shell or set LACY_AGENT_IO_MODE=interactive-pty." >&2
@@ -603,8 +608,12 @@ EOF
     lacy_start_spinner
     lacy_show_agent_step "Waiting for response"
     local _lacy_done_file
+    local _io_override="auto"
+    if [[ "$tool" == "opencode" ]]; then
+        _io_override="non-interactive-safe"
+    fi
     _lacy_done_file="$(mktemp)"
-    _lacy_run_tool_cmd_with_io "$cmd" "$query" "${LACY_CUSTOM_TOOL_TTY_REQUIRED:-false}" 2>&1 | {
+    _lacy_run_tool_cmd_with_io "$cmd" "$query" "${LACY_CUSTOM_TOOL_TTY_REQUIRED:-false}" "$_io_override" 2>&1 | {
         local _spinner_killed=false
         local _first_output_line=""
         local _line_count=0
