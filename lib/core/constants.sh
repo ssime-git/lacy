@@ -48,6 +48,13 @@ LACY_SHELL_DEFER_QUIT=false
 # === Preheat ===
 : "${LACY_PREHEAT_EAGER:="false"}"
 : "${LACY_PREHEAT_SERVER_PORT:="4096"}"
+: "${LACY_AGENT_INCLUDE_HISTORY:="false"}"
+: "${LACY_SHOW_AGENT_STEPS:="true"}"
+: "${LACY_HISTORY_MAX_ENTRIES:=5}"
+: "${LACY_REF_MAX_BYTES:=8192}"
+: "${LACY_REF_DIR_MAX_FILES:=12}"
+: "${LACY_REF_DIR_MAX_DEPTH:=3}"
+: "${LACY_REF_DIR_MAX_LISTING:=40}"
 
 # === Colors (256-color palette) ===
 LACY_COLOR_SHELL=34        # Green - shell commands

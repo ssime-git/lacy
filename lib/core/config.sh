@@ -92,7 +92,7 @@ lacy_shell_load_config() {
         # Define key mappings for each section
         local api_keys_map="openai:LACY_SHELL_API_OPENAI,anthropic:LACY_SHELL_API_ANTHROPIC"
         local model_map="provider:LACY_SHELL_PROVIDER,name:LACY_SHELL_MODEL_NAME"
-        local agent_map="command:LACY_SHELL_AGENT_COMMAND,context_mode:LACY_SHELL_AGENT_CONTEXT_MODE,needs_api_keys:LACY_SHELL_AGENT_NEEDS_API_KEYS"
+        local agent_map="command:LACY_SHELL_AGENT_COMMAND,context_mode:LACY_SHELL_AGENT_CONTEXT_MODE,needs_api_keys:LACY_SHELL_AGENT_NEEDS_API_KEYS,history_context:LACY_AGENT_INCLUDE_HISTORY,show_processing_steps:LACY_SHOW_AGENT_STEPS"
         local agent_tools_map="active:LACY_ACTIVE_TOOL,custom_command:LACY_CUSTOM_TOOL_CMD"
         local preheat_map="eager:LACY_PREHEAT_EAGER,server_port:LACY_PREHEAT_SERVER_PORT"
 
@@ -176,6 +176,8 @@ lacy_shell_load_config() {
             printf 'LACY_SHELL_MODEL_NAME=%q\n' "$LACY_SHELL_MODEL_NAME"
             printf 'LACY_ACTIVE_TOOL=%q\n' "$LACY_ACTIVE_TOOL"
             printf 'LACY_CUSTOM_TOOL_CMD=%q\n' "$LACY_CUSTOM_TOOL_CMD"
+            printf 'LACY_AGENT_INCLUDE_HISTORY=%q\n' "$LACY_AGENT_INCLUDE_HISTORY"
+            printf 'LACY_SHOW_AGENT_STEPS=%q\n' "$LACY_SHOW_AGENT_STEPS"
             printf 'LACY_SHELL_MCP_SERVERS=%q\n' "$LACY_SHELL_MCP_SERVERS"
             printf 'LACY_SHELL_MCP_SERVERS_JSON=%q\n' "$LACY_SHELL_MCP_SERVERS_JSON"
         } > "$LACY_SHELL_CONFIG_CACHE_FILE"
@@ -212,6 +214,8 @@ lacy_shell_load_config() {
     # Active AI tool (empty = auto-detect)
     export LACY_ACTIVE_TOOL
     export LACY_CUSTOM_TOOL_CMD
+    export LACY_AGENT_INCLUDE_HISTORY
+    export LACY_SHOW_AGENT_STEPS
 
     # Initialize current mode from default
     LACY_SHELL_CURRENT_MODE="$LACY_SHELL_DEFAULT_MODE"
@@ -284,6 +288,10 @@ agent:
   context_mode: stdin
   # Set to true if the CLI needs API keys from lacy
   needs_api_keys: false
+  # Include redacted shell history in agent prompts
+  history_context: false
+  # Show lightweight processing steps while the agent runs
+  show_processing_steps: true
 EOF
 
     echo "Created default configuration at: $LACY_SHELL_CONFIG_FILE"

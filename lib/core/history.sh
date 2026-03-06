@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
 
-# Shell execution history capture + query enrichment for Lacy Shell
-# Logs commands + exit codes to conversation.log.
+# Shell execution history capture + query enrichment for Lacy Shell.
 # Shared across Bash 4+ and ZSH.
 
 # Last command captured by preexec (ZSH) or precmd (Bash)
 LACY_LAST_CMD=""
 
-# Append a completed command + exit code to conversation.log.
-# Usage: lacy_history_log "command text" exit_code
+# Populated by lacy_expand_references and read by mcp.sh
+LACY_EXPANDED_REFS=()
+
 lacy_history_log() {
     local cmd="$1"
     local exit_code="${2:-0}"
 
     [[ -z "$cmd" ]] && return
     [[ -z "$LACY_SHELL_CONVERSATION_FILE" ]] && return
-
-    # Skip internal lacy function calls
     [[ "$cmd" == lacy_* || "$cmd" == _lacy_* ]] && return
 
     local timestamp
@@ -30,70 +28,33 @@ lacy_history_log() {
     } >> "$LACY_SHELL_CONVERSATION_FILE"
 }
 
-# ============================================================================
-# Feature 2: @file reference expansion
-#
-# Scans a query string for @path tokens. For each token that resolves to a
-# readable file, the file's contents are appended to the query so the agent
-# can read them directly.
-#
-# Rules:
-#   - Token must start with @ and contain at least one non-@ character
-#   - Trailing punctuation (,.;:!?) is stripped before resolving
-#   - Files larger than 8 KB are truncated
-#   - Each file is included at most once (deduplication)
-#
-# Usage: expanded=$(lacy_expand_file_refs "fix the bug in @src/main.go")
-# ============================================================================
-LACY_EXPANDED_FILES=()   # populated by lacy_expand_file_refs, read by mcp.sh
+lacy_redact_sensitive_text() {
+    local value="$1"
 
-lacy_expand_file_refs() {
-    local query="$1"
-    local result="$query"
-    local seen=":"   # colon-delimited list of already-expanded paths
-    LACY_EXPANDED_FILES=()
+    value=$(printf '%s' "$value" | sed -E \
+        -e 's#([A-Za-z][A-Za-z0-9_]*(TOKEN|KEY|SECRET|PASS|PASSWORD|COOKIE|AUTH)[A-Za-z0-9_]*=)[^[:space:]]+#\1[REDACTED]#Ig' \
+        -e 's#(https?://[^/@[:space:]]+:)[^@/[:space:]]+@#\1[REDACTED]@#g' \
+        -e 's#([?&](access_token|token|api_key|apikey|password|passwd|secret)=)[^&[:space:]]+#\1[REDACTED]#Ig' \
+        -e 's#(Authorization:[[:space:]]*(Bearer|Basic)[[:space:]]+)[^"[:space:]]+#\1[REDACTED]#Ig' \
+        -e "s#(Authorization:[[:space:]]*(Bearer|Basic)[[:space:]]+)[^'[:space:]]+#\\1[REDACTED]#Ig" \
+        -e 's#(--header[=[:space:]]+["'"'"']?Authorization:[[:space:]]*(Bearer|Basic)[[:space:]]+)[^"'"'"'"[:space:]]+#\1[REDACTED]#Ig' \
+        -e 's#(-u[[:space:]]+[^:[:space:]]+:)[^[:space:]]+#\1[REDACTED]#g')
 
-    local tmp="$query"
-    while [[ "$tmp" == *"@"* ]]; do
-        tmp="${tmp#*@}"                         # advance past the next @
-        local token="${tmp%%[[:space:]]*}"       # grab word up to whitespace
-        tmp="${tmp#"$token"}"                   # advance past the token
-
-        [[ -z "$token" ]] && continue
-
-        # Strip trailing punctuation characters
-        local path="$token"
-        while [[ -n "$path" && "${path: -1}" == [,.:;!?] ]]; do
-            path="${path%?}"
-        done
-
-        [[ -z "$path" ]] && continue
-
-        # Reject absolute paths and directory traversal to prevent
-        # indirect prompt injection from exfiltrating sensitive files
-        [[ "$path" == /* ]] && continue
-        [[ "$path" == ~* ]] && continue
-        [[ "$path" == *..* ]] && continue
-
-        # Expand readable files not yet seen
-        if [[ -f "$path" && -r "$path" && "$seen" != *":${path}:"* ]]; then
-            seen+=":${path}:"
-            LACY_EXPANDED_FILES+=("$path")
-            local contents
-            contents=$(head -c 8192 "$path" 2>/dev/null)
-            result+=$'\n\n'"--- @${path} ---"$'\n'"${contents}"$'\n'"---"
-        fi
-    done
-
-    printf '%s' "$result"
+    printf '%s' "$value"
 }
 
-# Return a query enriched with recent command history as context.
-# Reads the last few entries from conversation.log.
-# Usage: enriched=$(lacy_build_context_query "user query")
+lacy_history_should_include_context() {
+    [[ "${LACY_AGENT_INCLUDE_HISTORY:-false}" == "true" ]]
+}
+
 lacy_build_context_query() {
     local query="$1"
-    local max_entries=5
+    local max_entries="${LACY_HISTORY_MAX_ENTRIES:-5}"
+
+    if ! lacy_history_should_include_context; then
+        printf '%s' "$query"
+        return
+    fi
 
     if [[ ! -f "$LACY_SHELL_CONVERSATION_FILE" ]]; then
         printf '%s' "$query"
@@ -102,29 +63,173 @@ lacy_build_context_query() {
 
     local raw
     raw=$(tail -n $(( max_entries * 4 )) "$LACY_SHELL_CONVERSATION_FILE" 2>/dev/null)
-
-    if [[ -z "$raw" ]]; then
+    [[ -z "$raw" ]] && {
         printf '%s' "$query"
         return
-    fi
+    }
 
-    # Parse log entries into readable context
-    local context="Recent shell commands:"$'\n'
-    local line cmd="" exit_code=""
+    local context="" line cmd="" exit_code=""
     while IFS= read -r line; do
         case "$line" in
             "CMD: "*) cmd="${line#CMD: }" ;;
             "EXIT: "*) exit_code="${line#EXIT: }" ;;
             ---)
                 if [[ -n "$cmd" ]]; then
-                    context+="  \$ ${cmd}"
-                    [[ -n "$exit_code" && "$exit_code" != "0" ]] && context+="  (exit ${exit_code})"
+                    cmd=$(lacy_redact_sensitive_text "$cmd")
+                    context+="  - ${cmd}"
+                    [[ -n "$exit_code" && "$exit_code" != "0" ]] && context+=" (exit ${exit_code})"
                     context+=$'\n'
                 fi
-                cmd="" exit_code=""
+                cmd=""
+                exit_code=""
                 ;;
         esac
     done <<< "$raw"
 
-    printf '%s\n\n%s' "$context" "$query"
+    if [[ -z "$context" ]]; then
+        printf '%s' "$query"
+        return
+    fi
+
+    printf '%s\n%s\n%s\n\n%s' \
+        "[Lacy shell context]" \
+        "Recent shell commands (redacted):" \
+        "${context%$'\n'}" \
+        "$query"
+}
+
+lacy_is_safe_ref_path() {
+    local ref_path="$1"
+
+    [[ -z "$ref_path" ]] && return 1
+    [[ "$ref_path" == /* ]] && return 1
+    [[ "$ref_path" == ~* ]] && return 1
+    [[ "$ref_path" == *".."* ]] && return 1
+    return 0
+}
+
+lacy_is_text_file() {
+    local ref_path="$1"
+
+    [[ ! -f "$ref_path" || ! -r "$ref_path" ]] && return 1
+    [[ ! -s "$ref_path" ]] && return 0
+    LC_ALL=C grep -Iq . "$ref_path" 2>/dev/null
+}
+
+lacy_append_reference_note() {
+    local note="$1"
+    LACY_EXPANDED_REFS+=("$note")
+}
+
+lacy_append_file_reference() {
+    local result_var="$1"
+    local ref_path="$2"
+    local label="${3:-$ref_path}"
+    local contents
+    contents=$(head -c "${LACY_REF_MAX_BYTES:-8192}" "$ref_path" 2>/dev/null)
+
+    printf -v "$result_var" '%s\n%s\n```text\n%s\n```\n' \
+        "${!result_var}" \
+        "- FILE @${label}" \
+        "$contents"
+}
+
+lacy_collect_directory_entries() {
+    local ref_path="$1"
+    local max_depth="${LACY_REF_DIR_MAX_DEPTH:-3}"
+    local max_listing="${LACY_REF_DIR_MAX_LISTING:-40}"
+
+    find "$ref_path" -mindepth 1 -maxdepth "$max_depth" | LC_ALL=C sort | head -n "$max_listing"
+}
+
+lacy_expand_references() {
+    local query="$1"
+    local refs_block=""
+    local seen=":"
+    local tmp="$query"
+    LACY_EXPANDED_REFS=()
+
+    while [[ "$tmp" == *"@"* ]]; do
+        tmp="${tmp#*@}"
+        local token="${tmp%%[[:space:]]*}"
+        tmp="${tmp#"$token"}"
+
+        [[ -z "$token" ]] && continue
+
+        local ref_path="$token"
+        while [[ -n "$ref_path" ]]; do
+            case "${ref_path: -1}" in
+                ','|'.'|':'|';'|'!'|'?') ref_path="${ref_path%?}" ;;
+                *) break ;;
+            esac
+        done
+
+        lacy_is_safe_ref_path "$ref_path" || continue
+        [[ -e "$ref_path" ]] || continue
+        [[ "$seen" == *":${ref_path}:"* ]] && continue
+        seen+=":${ref_path}:"
+
+        if [[ -f "$ref_path" && -r "$ref_path" ]]; then
+            lacy_append_reference_note "file:${ref_path}"
+            refs_block+=$'\n'"- FILE @${ref_path}"$'\n'
+            refs_block+="\`\`\`text"$'\n'
+            refs_block+="$(head -c "${LACY_REF_MAX_BYTES:-8192}" "$ref_path" 2>/dev/null)"$'\n'
+            refs_block+="\`\`\`"$'\n'
+            continue
+        fi
+
+        if [[ -d "$ref_path" && -r "$ref_path" ]]; then
+            lacy_append_reference_note "dir:${ref_path}"
+            refs_block+=$'\n'"- DIRECTORY @${ref_path}"$'\n'
+            refs_block+="Entries:"$'\n'
+
+            local listing_count=0
+            local entry
+            while IFS= read -r entry; do
+                [[ -z "$entry" ]] && continue
+                entry="${entry#./}"
+                refs_block+="  - ${entry}"$'\n'
+                listing_count=$(( listing_count + 1 ))
+            done < <(lacy_collect_directory_entries "$ref_path")
+
+            if (( listing_count == 0 )); then
+                refs_block+="  - (empty directory)"$'\n'
+            fi
+
+            local excerpt_count=0
+            local file
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                if lacy_is_text_file "$file"; then
+                    refs_block+="Text excerpts:"$'\n'
+                    break
+                fi
+            done < <(find "$ref_path" -maxdepth "${LACY_REF_DIR_MAX_DEPTH:-3}" -type f | LC_ALL=C sort | head -n "${LACY_REF_DIR_MAX_FILES:-12}")
+
+            while IFS= read -r file; do
+                [[ -z "$file" ]] && continue
+                if ! lacy_is_text_file "$file"; then
+                    continue
+                fi
+                refs_block+="  - ${file}"$'\n'
+                refs_block+="\`\`\`text"$'\n'
+                refs_block+="$(head -c "${LACY_REF_MAX_BYTES:-8192}" "$file" 2>/dev/null)"$'\n'
+                refs_block+="\`\`\`"$'\n'
+                excerpt_count=$(( excerpt_count + 1 ))
+                if (( excerpt_count >= ${LACY_REF_DIR_MAX_FILES:-12} )); then
+                    break
+                fi
+            done < <(find "$ref_path" -maxdepth "${LACY_REF_DIR_MAX_DEPTH:-3}" -type f | LC_ALL=C sort)
+        fi
+    done
+
+    if [[ -z "$refs_block" ]]; then
+        printf '%s' "$query"
+        return
+    fi
+
+    printf '%s\n%s\n\n%s' \
+        "[Lacy referenced paths]" \
+        "${refs_block#$'\n'}" \
+        "$query"
 }

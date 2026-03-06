@@ -104,7 +104,6 @@ lacy_shell_at_complete_widget() {
 
     if [[ "$cur_word" == @?* ]]; then
         local prefix="${cur_word#@}"
-        # Expand glob — (N) suppresses error if no match, (f) splits on newline
         local -a matches
         matches=( ${(N)~prefix}*(N) )
 
@@ -114,12 +113,15 @@ lacy_shell_at_complete_widget() {
         elif (( ${#matches} == 1 )); then
             # Single match — complete in-place
             local insert="${matches[1]}"
+            [[ -d "$insert" ]] && insert="${insert}/"
             local offset=$(( CURSOR - ${#cur_word} ))
             BUFFER="${BUFFER[1,$offset]}@${insert}${BUFFER[$(( CURSOR + 1 )),-1]}"
             CURSOR=$(( offset + ${#insert} + 1 ))
         else
             # Multiple matches — list them in dim gray and let user keep typing
-            zle -M "$(printf '\e[38;5;238m  @%s\e[0m\n' "${matches[@]}")"
+            local display
+            display=$(printf '\e[38;5;238m  @%s\e[0m\n' "${matches[@]}")
+            zle -M "$display"
         fi
     else
         # Default Tab behavior

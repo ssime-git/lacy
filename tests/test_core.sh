@@ -32,6 +32,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$REPO_DIR/lib/core/constants.sh"
 source "$REPO_DIR/lib/core/detection.sh"
 source "$REPO_DIR/lib/core/modes.sh"
+source "$REPO_DIR/lib/core/history.sh"
+source "$REPO_DIR/lib/core/render.sh"
 
 # Test counter
 PASS=0
@@ -72,6 +74,38 @@ assert_false() {
     else
         PASS=$(( PASS + 1 ))
     fi
+}
+
+assert_contains() {
+    local test_name="$1"
+    local haystack="$2"
+    local needle="$3"
+
+    if [[ "$haystack" == *"$needle"* ]]; then
+        PASS=$(( PASS + 1 ))
+    else
+        echo "  FAIL: $test_name"
+        echo "    Missing: $needle"
+        FAIL=$(( FAIL + 1 ))
+    fi
+}
+
+assert_not_contains() {
+    local test_name="$1"
+    local haystack="$2"
+    local needle="$3"
+
+    if [[ "$haystack" == *"$needle"* ]]; then
+        echo "  FAIL: $test_name"
+        echo "    Unexpected: $needle"
+        FAIL=$(( FAIL + 1 ))
+    else
+        PASS=$(( PASS + 1 ))
+    fi
+}
+
+strip_ansi() {
+    printf '%s' "$1" | sed -E $'s/\x1B\\[[0-9;]*[A-Za-z]//g'
 }
 
 # ============================================================================
@@ -121,10 +155,10 @@ assert_eq "perfect lets move on → agent" "agent" "$(lacy_shell_classify_input 
 assert_eq "thanks for the help → agent" "agent" "$(lacy_shell_classify_input 'thanks for the help')"
 
 # Inline env var assignments → shell
-assert_eq "RUST_LOG=debug cargo run → shell" "shell" "$(lacy_shell_classify_input 'RUST_LOG=debug cargo run')"
-assert_eq "FOO=bar node index.js → shell" "shell" "$(lacy_shell_classify_input 'FOO=bar node index.js')"
-assert_eq "FOO=bar BAZ=qux node index.js → shell" "shell" "$(lacy_shell_classify_input 'FOO=bar BAZ=qux node index.js')"
-assert_eq "CC=gcc make -j4 → shell" "shell" "$(lacy_shell_classify_input 'CC=gcc make -j4')"
+assert_eq "FOO=bar env → shell" "shell" "$(lacy_shell_classify_input 'FOO=bar env')"
+assert_eq "FOO=bar printf hi → shell" "shell" "$(lacy_shell_classify_input 'FOO=bar printf hi')"
+assert_eq "FOO=bar BAZ=qux env → shell" "shell" "$(lacy_shell_classify_input 'FOO=bar BAZ=qux env')"
+assert_eq "LANG=C env → shell" "shell" "$(lacy_shell_classify_input 'LANG=C env')"
 assert_eq "FOO=bar (bare assignment, no cmd) → shell" "shell" "$(lacy_shell_classify_input 'FOO=bar')"
 assert_eq "FOO=bar nonexistent thing → agent" "agent" "$(lacy_shell_classify_input 'FOO=bar nonexistent_cmd thing')"
 
@@ -289,6 +323,74 @@ source "$REPO_DIR/lib/core/mcp.sh"
 assert_eq "tool cmd lash" "lash run -c" "$(lacy_tool_cmd 'lash')"
 assert_eq "tool cmd claude" "claude -p" "$(lacy_tool_cmd 'claude')"
 assert_eq "tool cmd unknown" "" "$(lacy_tool_cmd 'unknown')"
+
+# ============================================================================
+# History and Reference Tests
+# ============================================================================
+
+echo ""
+echo "--- History and References ---"
+
+TEST_TMPDIR="$(mktemp -d)"
+LACY_SHELL_CONVERSATION_FILE="$TEST_TMPDIR/conversation.log"
+
+cat > "$LACY_SHELL_CONVERSATION_FILE" <<'EOF'
+CMD: export OPENAI_API_KEY=sk-secret
+EXIT: 0
+TS: 10:00:00
+---
+CMD: curl -H "Authorization: Bearer abc123" "https://api.example.com?token=qwerty"
+EXIT: 1
+TS: 10:00:01
+---
+EOF
+
+assert_eq "history off by default" "question" "$(lacy_build_context_query 'question')"
+
+LACY_AGENT_INCLUDE_HISTORY=true
+history_context="$(lacy_build_context_query 'question')"
+assert_contains "history heading added" "$history_context" "Recent shell commands (redacted):"
+assert_not_contains "history redacts env secret" "$history_context" "sk-secret"
+assert_not_contains "history redacts bearer secret" "$history_context" "abc123"
+assert_not_contains "history redacts token query param" "$history_context" "qwerty"
+assert_contains "history keeps redaction marker" "$history_context" "[REDACTED]"
+
+mkdir -p "$TEST_TMPDIR/refdir/nested"
+printf 'alpha\nbeta\n' > "$TEST_TMPDIR/refdir/file.txt"
+printf 'gamma\n' > "$TEST_TMPDIR/refdir/nested/inner.txt"
+printf 'root file\n' > "$TEST_TMPDIR/root.txt"
+
+(
+    cd "$TEST_TMPDIR" || exit 1
+    expanded_refs="$(lacy_expand_references 'check @root.txt and @refdir please')"
+    assert_contains "file ref metadata" "$expanded_refs" "FILE @root.txt"
+    assert_contains "dir ref metadata" "$expanded_refs" "DIRECTORY @refdir"
+    assert_contains "dir entry listing" "$expanded_refs" "refdir/nested/inner.txt"
+    assert_contains "query preserved after refs" "$expanded_refs" "check @root.txt and @refdir please"
+)
+
+# ============================================================================
+# Rendering Tests
+# ============================================================================
+
+echo ""
+echo "--- Rendering ---"
+
+rendered_output="$(printf '%s\n' '<thinking>step 1</thinking>' '- [ ] todo item' '- [x] done item' | lacy_render_response)"
+rendered_output="$(strip_ansi "$rendered_output")"
+assert_contains "thinking header rendered" "$rendered_output" "Thinking"
+assert_contains "todo rendered unchecked" "$rendered_output" "☐ todo item"
+assert_contains "todo rendered checked" "$rendered_output" "☑ done item"
+
+non_thinking_output="$(printf '%s\n' 'plain response' | lacy_render_response)"
+non_thinking_output="$(strip_ansi "$non_thinking_output")"
+assert_eq "plain response unchanged" "plain response" "$non_thinking_output"
+
+step_output="$(lacy_show_agent_step 'Preparing request')"
+step_output="$(strip_ansi "$step_output")"
+assert_eq "processing step output" "  > Preparing request" "$step_output"
+
+rm -rf "$TEST_TMPDIR"
 
 # ============================================================================
 # Results

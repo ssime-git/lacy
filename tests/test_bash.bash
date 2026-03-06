@@ -32,6 +32,8 @@ source "$REPO_DIR/lib/core/constants.sh"
 source "$REPO_DIR/lib/core/config.sh"
 source "$REPO_DIR/lib/core/modes.sh"
 source "$REPO_DIR/lib/core/spinner.sh"
+source "$REPO_DIR/lib/core/render.sh"
+source "$REPO_DIR/lib/core/history.sh"
 source "$REPO_DIR/lib/core/mcp.sh"
 source "$REPO_DIR/lib/core/preheat.sh"
 source "$REPO_DIR/lib/core/detection.sh"
@@ -54,6 +56,20 @@ assert_eq() {
         echo "  FAIL: $test_name"
         echo "    Expected: $expected"
         echo "    Actual:   $actual"
+        FAIL=$(( FAIL + 1 ))
+    fi
+}
+
+assert_contains() {
+    local test_name="$1"
+    local haystack="$2"
+    local needle="$3"
+
+    if [[ "$haystack" == *"$needle"* ]]; then
+        PASS=$(( PASS + 1 ))
+    else
+        echo "  FAIL: $test_name"
+        echo "    Missing: $needle"
         FAIL=$(( FAIL + 1 ))
     fi
 }
@@ -145,6 +161,36 @@ if type ask &>/dev/null; then PASS=$(( PASS + 1 )); else echo "  FAIL: ask funct
 if type mode &>/dev/null; then PASS=$(( PASS + 1 )); else echo "  FAIL: mode function missing"; FAIL=$(( FAIL + 1 )); fi
 if type tool &>/dev/null; then PASS=$(( PASS + 1 )); else echo "  FAIL: tool function missing"; FAIL=$(( FAIL + 1 )); fi
 if type quit &>/dev/null; then PASS=$(( PASS + 1 )); else echo "  FAIL: quit function missing"; FAIL=$(( FAIL + 1 )); fi
+
+# ============================================================================
+# Bash History/Render
+# ============================================================================
+
+echo ""
+echo "--- Bash History/Render ---"
+
+LACY_AGENT_INCLUDE_HISTORY=true
+LACY_SHELL_CONVERSATION_FILE="/tmp/lacy_test_history_bash_$$"
+cat > "$LACY_SHELL_CONVERSATION_FILE" <<'EOF'
+CMD: export SECRET_TOKEN=super-secret
+EXIT: 0
+TS: 10:00:00
+---
+EOF
+
+history_context="$(lacy_build_context_query 'help me')"
+assert_contains "bash history context enabled" "$history_context" "Recent shell commands (redacted):"
+if [[ "$history_context" == *"super-secret"* ]]; then
+    echo "  FAIL: bash history should redact secrets"
+    FAIL=$(( FAIL + 1 ))
+else
+    PASS=$(( PASS + 1 ))
+fi
+
+step_output="$(lacy_show_agent_step 'Waiting for response')"
+assert_contains "bash step output" "$step_output" "Waiting for response"
+
+rm -f "$LACY_SHELL_CONVERSATION_FILE"
 
 # ============================================================================
 # Results

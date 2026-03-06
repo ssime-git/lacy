@@ -242,14 +242,14 @@ except: pass" 2>/dev/null)
 # Send query to AI agent (configurable tool or fallback)
 lacy_shell_query_agent() {
     local query
-    # Feature 2: expand @file references in the query
-    query=$(lacy_expand_file_refs "$1")
-    # Show which files are being included (before spinner starts)
-    local _f
-    for _f in "${LACY_EXPANDED_FILES[@]}"; do
-        lacy_print_color 238 "  @${_f}"
+    lacy_show_agent_step "Preparing request"
+    query=$(lacy_expand_references "$1")
+
+    local _ref
+    for _ref in "${LACY_EXPANDED_REFS[@]}"; do
+        lacy_print_color 238 "  @${_ref#*:}"
     done
-    # Feature 5: enrich with recent shell history context
+
     query=$(lacy_build_context_query "$query")
     local tool="${LACY_ACTIVE_TOOL}"
 
@@ -380,6 +380,7 @@ EOF
     if [[ "$_auto_detected" == true ]]; then
         lacy_print_color 238 "  Using $tool (auto-detected)"
     fi
+    lacy_show_agent_step "Querying ${tool}"
 
     # === Preheat: lash/opencode background server ===
     if [[ "$tool" == "lash" || "$tool" == "opencode" ]]; then
@@ -394,6 +395,7 @@ EOF
             lacy_preheat_server_restore_session
             if [[ $exit_code -eq 0 && -n "$server_result" ]]; then
                 while [[ "$server_result" == $'\n'* ]]; do server_result="${server_result#$'\n'}"; done
+                lacy_show_agent_step "Rendering response"
                 printf '%s\n' "$server_result" | lacy_render_response
                 _lacy_print_resume_hint "$tool"
                 echo ""
@@ -425,6 +427,7 @@ EOF
             local result_text
             result_text=$(lacy_preheat_claude_extract_result "$json_output")
             while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
+            lacy_show_agent_step "Rendering response"
             if [[ -n "$result_text" ]]; then
                 printf '%s\n' "$result_text" | lacy_render_response
             else
@@ -454,6 +457,7 @@ EOF
                 local result_text
                 result_text=$(lacy_preheat_claude_extract_result "$json_output")
                 while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
+                lacy_show_agent_step "Rendering response"
                 if [[ -n "$result_text" ]]; then
                     printf '%s\n' "$result_text" | lacy_render_response
                 else
@@ -477,10 +481,12 @@ EOF
     # === Generic path (gemini, codex, custom, and fallback) ===
     echo ""
     lacy_start_spinner
+    lacy_show_agent_step "Waiting for response"
     _lacy_run_tool_cmd "$cmd" "$query" </dev/tty 2>&1 | {
         local _spinner_killed=false
         local _full_output=""
         local _line_count=0
+        _lacy_reset_render_state
         while IFS= read -r line; do
             # Skip agent startup noise (e.g. "> build · big-pickle", "exit_code=0")
             [[ "$line" =~ ^'> '[a-z]+' · ' ]] && continue
@@ -499,9 +505,9 @@ EOF
             if (( _line_count > 1 )); then
                 # Multi-line output — not a JSON error blob, flush everything
                 if [[ $_line_count -eq 2 ]]; then
-                    _lacy_render_line "$_full_output"
+                    _lacy_render_stream_line "$_full_output"
                 fi
-                _lacy_render_line "$line"
+                _lacy_render_stream_line "$line"
             fi
         done
         if ! $_spinner_killed && [[ -n "$LACY_SPINNER_PID" ]]; then
@@ -511,7 +517,7 @@ EOF
         fi
         # Single-line output — check if it's a JSON error
         if (( _line_count <= 1 )); then
-            lacy_format_tool_error "$_full_output" "$tool" || _lacy_render_line "$_full_output"
+            lacy_format_tool_error "$_full_output" "$tool" || _lacy_render_stream_line "$_full_output"
         fi
     }
     local exit_code
