@@ -114,8 +114,61 @@ lacy_preheat_server_is_healthy() {
     curl -sf --max-time 0.3 "http://localhost:${LACY_PREHEAT_SERVER_PORT}/global/health" >/dev/null 2>&1
 }
 
-# Send query to background server via REST API
-lacy_preheat_server_query() {
+_lacy_preheat_server_extract_text() {
+    local response="$1"
+    local parsed_response=""
+
+    if command -v jq >/dev/null 2>&1; then
+        parsed_response=$(printf '%s\n' "$response" | jq -r '
+            if type == "array" then
+                (
+                    [.[] | select(.role == "assistant") | .parts[]? | select(.type == "text") | .text] |
+                    last
+                ) // (
+                    [.[] | .text? // .content? // .message? // .result?] |
+                    map(select(. != null and . != "")) |
+                    last
+                ) // empty
+            elif .parts then
+                [.parts[] | select(.type == "text") | .text] | join("\n") // empty
+            else
+                .result // .content // .text // .response // .message // empty
+            end' 2>/dev/null)
+    elif command -v python3 >/dev/null 2>&1; then
+        parsed_response=$(printf '%s\n' "$response" | python3 -c "
+import json, sys
+data = sys.stdin.read().strip()
+for line in reversed(data.split('\n')):
+    line = line.strip()
+    if not line: continue
+    try:
+        obj = json.loads(line)
+        if isinstance(obj, list):
+            for msg in reversed(obj):
+                if msg.get('role') == 'assistant':
+                    texts = [p['text'] for p in msg.get('parts', []) if p.get('type') == 'text']
+                    if texts: print('\n'.join(texts)); sys.exit(0)
+                for key in ('text', 'content', 'message', 'result'):
+                    val = msg.get(key)
+                    if val and isinstance(val, str): print(val); sys.exit(0)
+        elif isinstance(obj, dict):
+            parts = obj.get('parts', [])
+            texts = [p['text'] for p in parts if p.get('type') == 'text']
+            if texts: print('\n'.join(texts)); sys.exit(0)
+            for key in ('result', 'content', 'text', 'response', 'message'):
+                val = obj.get(key)
+                if val and isinstance(val, str): print(val); sys.exit(0)
+    except (json.JSONDecodeError, KeyError, TypeError): continue
+print(data)" 2>/dev/null)
+    else
+        parsed_response=$(printf '%s' "$response" | sed 's/.*"text"[[:space:]]*:[[:space:]]*"//' | sed 's/"[[:space:]]*[,}\]].*//' | sed 's/\\n/\'$'\n''/g; s/\\"/"/g; s/\\\\/\\/g')
+    fi
+
+    printf '%s' "$parsed_response"
+}
+
+# Send query to background server via REST API and return raw payload
+lacy_preheat_server_query_raw() {
     local query="$1"
 
     if [[ -z "$LACY_PREHEAT_SERVER_SESSION_ID" ]]; then
@@ -150,42 +203,8 @@ lacy_preheat_server_query() {
         return 1
     fi
 
-    local parsed_response=""
-    if command -v jq >/dev/null 2>&1; then
-        parsed_response=$(printf '%s\n' "$response" | jq -r '
-            if type == "array" then
-                [.[] | select(.role == "assistant") | .parts[]? | select(.type == "text") | .text] | last // empty
-            elif .parts then
-                [.parts[] | select(.type == "text") | .text] | join("\n") // empty
-            else
-                .result // .content // .text // .response // .message // empty
-            end' 2>/dev/null)
-    elif command -v python3 >/dev/null 2>&1; then
-        parsed_response=$(printf '%s\n' "$response" | python3 -c "
-import json, sys
-data = sys.stdin.read().strip()
-for line in reversed(data.split('\n')):
-    line = line.strip()
-    if not line: continue
-    try:
-        obj = json.loads(line)
-        if isinstance(obj, list):
-            for msg in reversed(obj):
-                if msg.get('role') == 'assistant':
-                    texts = [p['text'] for p in msg.get('parts', []) if p.get('type') == 'text']
-                    if texts: print('\n'.join(texts)); sys.exit(0)
-        elif isinstance(obj, dict):
-            parts = obj.get('parts', [])
-            texts = [p['text'] for p in parts if p.get('type') == 'text']
-            if texts: print('\n'.join(texts)); sys.exit(0)
-            for key in ('result', 'content', 'text', 'response', 'message'):
-                val = obj.get(key)
-                if val and isinstance(val, str): print(val); sys.exit(0)
-    except (json.JSONDecodeError, KeyError, TypeError): continue
-print(data)" 2>/dev/null)
-    else
-        parsed_response=$(printf '%s' "$response" | sed 's/.*"text"[[:space:]]*:[[:space:]]*"//' | sed 's/"[[:space:]]*[,}\]].*//' | sed 's/\\n/\'$'\n''/g; s/\\"/"/g; s/\\\\/\\/g')
-    fi
+    local parsed_response
+    parsed_response=$(_lacy_preheat_server_extract_text "$response")
 
     if [[ "$parsed_response" == *"Session not found"* ]]; then
         LACY_PREHEAT_SERVER_SESSION_ID=""
@@ -193,7 +212,19 @@ print(data)" 2>/dev/null)
         return 1
     fi
 
-    printf '%s' "$parsed_response"
+    printf '%s' "$response"
+}
+
+# Send query to background server via REST API
+lacy_preheat_server_query() {
+    local raw_file response rc
+    raw_file="$(mktemp)"
+    lacy_preheat_server_query_raw "$1" > "$raw_file"
+    rc=$?
+    response="$(cat "$raw_file" 2>/dev/null)"
+    rm -f "$raw_file"
+    [[ $rc -eq 0 ]] || return $rc
+    _lacy_preheat_server_extract_text "$response"
 }
 
 # Stop background server and clean up

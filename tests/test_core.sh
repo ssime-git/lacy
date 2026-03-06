@@ -32,6 +32,8 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$REPO_DIR/lib/core/constants.sh"
 source "$REPO_DIR/lib/core/detection.sh"
 source "$REPO_DIR/lib/core/modes.sh"
+source "$REPO_DIR/lib/core/refs.sh"
+source "$REPO_DIR/lib/core/agent_events.sh"
 source "$REPO_DIR/lib/core/history.sh"
 source "$REPO_DIR/lib/core/render.sh"
 
@@ -324,9 +326,9 @@ assert_eq "tool cmd lash" "lash run -c" "$(lacy_tool_cmd 'lash')"
 assert_eq "tool cmd claude" "claude -p" "$(lacy_tool_cmd 'claude')"
 assert_eq "tool cmd pi" "pi -p" "$(lacy_tool_cmd 'pi')"
 assert_eq "tool cmd unknown" "" "$(lacy_tool_cmd 'unknown')"
-assert_true "skip codex banner" _lacy_should_skip_stream_line "OpenAI Codex v0.71.0 (research preview)"
-assert_true "skip codex metadata" _lacy_should_skip_stream_line "workdir: /tmp/repo"
-assert_false "do not skip normal output" _lacy_should_skip_stream_line "Here is the answer"
+assert_true "skip codex banner" _lacy_provider_skip_line "codex" "OpenAI Codex v0.71.0 (research preview)"
+assert_true "skip codex metadata" _lacy_provider_skip_line "codex" "workdir: /tmp/repo"
+assert_false "do not skip normal output" _lacy_provider_skip_line "codex" "Here is the answer"
 
 # ============================================================================
 # History and Reference Tests
@@ -374,6 +376,13 @@ printf 'root file\n' > "$TEST_TMPDIR/root.txt"
     assert_contains "query preserved after refs" "$expanded_refs" "check @root.txt and @refdir please"
     assert_contains "expanded refs state includes file" "${LACY_EXPANDED_REFS[*]}" "file:root.txt"
     assert_contains "expanded refs state includes dir" "${LACY_EXPANDED_REFS[*]}" "dir:refdir"
+
+    scan_refs="$(lacy_ref_scan 'look at @root.txt, @"refdir/nested/inner.txt" and @refdir please')"
+    assert_contains "scan sees root file" "$scan_refs" $'\t@root.txt\troot.txt'
+    assert_contains "scan sees quoted path" "$scan_refs" $'\t@"refdir/nested/inner.txt"\trefdir/nested/inner.txt'
+
+    cursor_ref="$(lacy_ref_token_at_cursor 'look at @root.txt and @refdir' 18)"
+    assert_contains "cursor resolves active ref" "$cursor_ref" $'\t@root.txt\troot.txt'
 )
 
 # ============================================================================
@@ -389,9 +398,30 @@ assert_contains "thinking header rendered" "$rendered_output" "Thinking"
 assert_contains "todo rendered unchecked" "$rendered_output" "☐ todo item"
 assert_contains "todo rendered checked" "$rendered_output" "☑ done item"
 
+event_output="$(printf '%s\n' \
+    $'LACY_EVENT\tstatus\tPreparing request' \
+    $'LACY_EVENT\tthinking_start' \
+    $'LACY_EVENT\tthinking_delta\tstep 1' \
+    $'LACY_EVENT\tthinking_end' \
+    $'LACY_EVENT\ttodo_item\tunchecked\tinspect request' \
+    $'LACY_EVENT\ttodo_item\tchecked\tdone item' \
+    $'LACY_EVENT\taction_start\tread_file\tREADME.md' \
+    $'LACY_EVENT\taction_result\tread_file\tok\t42 lines' \
+    $'LACY_EVENT\tfinal_text\tplain response' | lacy_render_response)"
+event_output="$(strip_ansi "$event_output")"
+assert_contains "event status rendered" "$event_output" "Preparing request"
+assert_contains "event thinking rendered" "$event_output" "Thinking"
+assert_contains "event todo unchecked rendered" "$event_output" "☐ inspect request"
+assert_contains "event todo checked rendered" "$event_output" "☑ done item"
+assert_contains "event action rendered" "$event_output" "read_file [ok]: 42 lines"
+assert_contains "event final text rendered" "$event_output" "plain response"
+
 non_thinking_output="$(printf '%s\n' 'plain response' | lacy_render_response)"
 non_thinking_output="$(strip_ansi "$non_thinking_output")"
 assert_eq "plain response unchanged" "plain response" "$non_thinking_output"
+
+normalized_json="$(printf '%s\n' '{"type":"todo_item","state":"checked","text":"json todo"}' | lacy_agent_normalize_stream opencode)"
+assert_contains "json event normalized" "$normalized_json" $'LACY_EVENT\ttodo_item\tchecked\tjson todo'
 
 step_output="$(lacy_show_agent_step 'Preparing request')"
 step_output="$(strip_ansi "$step_output")"

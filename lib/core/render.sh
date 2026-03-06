@@ -118,12 +118,76 @@ _lacy_render_stream_line() {
     done
 }
 
+_lacy_render_event_line() {
+    local event_line="$1"
+    local rest="${event_line#${LACY_EVENT_PREFIX}}"
+    local type="${rest%%$'\t'*}"
+    local args=""
+    [[ "$rest" == *$'\t'* ]] && args="${rest#*$'\t'}"
+
+    local arg1="" arg2="" arg3=""
+    if [[ -n "$args" ]]; then
+        IFS=$'\t' read -r arg1 arg2 arg3 <<< "$args"
+    fi
+
+    case "$type" in
+        status)
+            lacy_show_agent_step "$arg1"
+            ;;
+        thinking_start)
+            _lacy_start_thinking_block
+            ;;
+        thinking_delta)
+            _lacy_render_thinking_line "$arg1"
+            ;;
+        thinking_end)
+            _lacy_finish_thinking_block
+            ;;
+        todo_item)
+            if [[ "$arg1" == "checked" ]]; then
+                lacy_print_color 34 "☑ $arg2"
+            else
+                lacy_print_color 238 "☐ $arg2"
+            fi
+            ;;
+        action_start)
+            if [[ -n "$arg2" ]]; then
+                lacy_show_agent_step "${arg1}: ${arg2}"
+            else
+                lacy_show_agent_step "$arg1"
+            fi
+            ;;
+        action_result)
+            if [[ -n "$arg3" ]]; then
+                lacy_show_agent_step "${arg1} [${arg2}]: ${arg3}"
+            elif [[ -n "$arg2" ]]; then
+                lacy_show_agent_step "${arg1} [${arg2}]"
+            else
+                lacy_show_agent_step "$arg1"
+            fi
+            ;;
+        text_delta|final_text)
+            _lacy_render_stream_line "$arg1"
+            ;;
+        error)
+            lacy_print_color 196 "$arg1"
+            ;;
+        *)
+            _lacy_render_stream_line "$event_line"
+            ;;
+    esac
+}
+
 lacy_render_response() {
     _lacy_reset_render_state
 
     local line
     while IFS= read -r line || [[ -n "$line" ]]; do
-        _lacy_render_stream_line "$line"
+        if lacy_is_event_line "$line"; then
+            _lacy_render_event_line "$line"
+        else
+            _lacy_render_stream_line "$line"
+        fi
     done
 
     if (( _LACY_IN_THINKING_BLOCK == 1 )); then

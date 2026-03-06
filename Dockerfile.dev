@@ -11,6 +11,7 @@ RUN apt-get update \
         nodejs \
         npm \
         procps \
+        python3 \
         ripgrep \
         zsh \
     && rm -rf /var/lib/apt/lists/*

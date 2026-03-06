@@ -90,27 +90,57 @@ _lacy_run_tool_cmd() {
     "${cmd_parts[@]}" "$query"
 }
 
-_lacy_should_skip_stream_line() {
-    local line="$1"
+_lacy_agent_can_use_tty() {
+    [[ -t 0 || -t 1 ]]
+}
 
-    case "$line" in
-        "OpenAI Codex v"*) return 0 ;;
-        "--------") return 0 ;;
-        "workdir: "*) return 0 ;;
-        "model: "*) return 0 ;;
-        "provider: "*) return 0 ;;
-        "approval: "*) return 0 ;;
-        "sandbox: "*) return 0 ;;
-        "reasoning effort: "*) return 0 ;;
-        "reasoning summaries: "*) return 0 ;;
-        "session id: "*) return 0 ;;
-        "user") return 0 ;;
-        "mcp startup: "*) return 0 ;;
-        "Reconnecting... "*) return 0 ;;
-        "tokens used") return 0 ;;
+_lacy_agent_stdio_mode() {
+    local requested="${LACY_AGENT_IO_MODE:-auto}"
+    case "$requested" in
+        interactive-pty|non-interactive-safe)
+            printf '%s' "$requested"
+            ;;
+        *)
+            if _lacy_agent_can_use_tty; then
+                printf 'interactive-pty'
+            else
+                printf 'non-interactive-safe'
+            fi
+            ;;
     esac
+}
 
-    return 1
+_lacy_run_tool_cmd_with_io() {
+    local cmd_str="$1"
+    local query="$2"
+    local tty_required="${3:-false}"
+    local io_mode
+    io_mode="$(_lacy_agent_stdio_mode)"
+
+    if [[ "$tty_required" == "true" && "$io_mode" != "interactive-pty" ]]; then
+        printf '%s\n' "Agent requires an interactive TTY. Retry from an interactive shell or set LACY_AGENT_IO_MODE=interactive-pty." >&2
+        return 97
+    fi
+
+    case "$io_mode" in
+        interactive-pty)
+            _lacy_run_tool_cmd "$cmd_str" "$query" </dev/tty
+            ;;
+        non-interactive-safe)
+            _lacy_run_tool_cmd "$cmd_str" "$query" </dev/null
+            ;;
+    esac
+}
+
+_lacy_render_normalized_stream() {
+    local tool="$1"
+    lacy_agent_normalize_stream "$tool" | lacy_render_response
+}
+
+_lacy_render_normalized_blob() {
+    local tool="$1"
+    local payload="$2"
+    lacy_agent_normalize_blob "$tool" "$payload" | lacy_render_response
 }
 
 # Tool registry — function-based for maximum portability
@@ -415,7 +445,11 @@ EOF
             echo ""
             lacy_start_spinner
             local server_result
-            server_result=$(lacy_preheat_server_query "$query")
+            if [[ "$tool" == "opencode" ]]; then
+                server_result=$(lacy_preheat_server_query_raw "$query")
+            else
+                server_result=$(lacy_preheat_server_query "$query")
+            fi
             local exit_code=$?
             lacy_stop_spinner
             # Restore session ID from file (lost in subshell)
@@ -423,7 +457,7 @@ EOF
             if [[ $exit_code -eq 0 && -n "$server_result" ]]; then
                 while [[ "$server_result" == $'\n'* ]]; do server_result="${server_result#$'\n'}"; done
                 lacy_show_agent_step "Rendering response"
-                printf '%s\n' "$server_result" | lacy_render_response
+                _lacy_render_normalized_blob "$tool" "$server_result"
                 _lacy_print_resume_hint "$tool"
                 echo ""
                 return 0
@@ -439,7 +473,7 @@ EOF
         echo ""
         lacy_start_spinner
         local json_output
-        json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd "$claude_cmd" "$query" </dev/tty 2>&1)
+        json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd_with_io "$claude_cmd" "$query" true 2>&1)
         local exit_code=$?
         lacy_stop_spinner
 
@@ -456,9 +490,9 @@ EOF
             while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
             lacy_show_agent_step "Rendering response"
             if [[ -n "$result_text" ]]; then
-                printf '%s\n' "$result_text" | lacy_render_response
+                _lacy_render_normalized_blob "$tool" "$result_text"
             else
-                printf '%s\n' "$json_output" | lacy_render_response
+                _lacy_render_normalized_blob "$tool" "$json_output"
             fi
             lacy_preheat_claude_capture_session "$json_output"
             _lacy_print_resume_hint "$tool"
@@ -468,7 +502,7 @@ EOF
             lacy_preheat_claude_reset_session
             claude_cmd=$(lacy_preheat_claude_build_cmd)
             lacy_start_spinner
-            json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd "$claude_cmd" "$query" </dev/tty 2>&1)
+            json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd_with_io "$claude_cmd" "$query" true 2>&1)
             exit_code=$?
             lacy_stop_spinner
 
@@ -486,9 +520,9 @@ EOF
                 while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
                 lacy_show_agent_step "Rendering response"
                 if [[ -n "$result_text" ]]; then
-                    printf '%s\n' "$result_text" | lacy_render_response
+                    _lacy_render_normalized_blob "$tool" "$result_text"
                 else
-                    printf '%s\n' "$json_output" | lacy_render_response
+                    _lacy_render_normalized_blob "$tool" "$json_output"
                 fi
                 lacy_preheat_claude_capture_session "$json_output"
                 _lacy_print_resume_hint "$tool"
@@ -509,16 +543,10 @@ EOF
     echo ""
     lacy_start_spinner
     lacy_show_agent_step "Waiting for response"
-    _lacy_run_tool_cmd "$cmd" "$query" </dev/tty 2>&1 | {
+    _lacy_run_tool_cmd_with_io "$cmd" "$query" "${LACY_CUSTOM_TOOL_TTY_REQUIRED:-false}" 2>&1 | {
         local _spinner_killed=false
-        local _first_output_line=""
-        local _line_count=0
-        _lacy_reset_render_state
+        local _buffer=""
         while IFS= read -r line; do
-            # Skip agent startup noise (e.g. "> build · big-pickle", "exit_code=0")
-            [[ "$line" =~ ^'> '[a-z]+' · ' ]] && continue
-            [[ "$line" =~ ^exit_code= ]] && continue
-            _lacy_should_skip_stream_line "$line" && continue
             if ! $_spinner_killed; then
                 if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
                     kill "$LACY_SPINNER_PID" 2>/dev/null
@@ -527,26 +555,16 @@ EOF
                 fi
                 _spinner_killed=true
             fi
-            (( _line_count++ ))
-            # Keep the first line buffered to detect single-line JSON error blobs.
-            if (( _line_count == 1 )); then
-                _first_output_line="$line"
-                continue
-            fi
-
-            if (( _line_count == 2 )); then
-                _lacy_render_stream_line "$_first_output_line"
-            fi
-            _lacy_render_stream_line "$line"
+            _buffer+="$line"$'\n'
         done
         if ! $_spinner_killed && [[ -n "$LACY_SPINNER_PID" ]]; then
             kill "$LACY_SPINNER_PID" 2>/dev/null
             sleep "$LACY_TERMINAL_FLUSH_DELAY"
             printf '\e[2K\r\e[?25h\e[?7h'
         fi
-        # Single-line output — check if it's a JSON error
-        if (( _line_count <= 1 )); then
-            lacy_format_tool_error "$_first_output_line" "$tool" || _lacy_render_stream_line "$_first_output_line"
+        if [[ -n "$_buffer" ]]; then
+            local _trimmed="${_buffer%$'\n'}"
+            lacy_format_tool_error "$_trimmed" "$tool" || _lacy_render_normalized_blob "$tool" "$_trimmed"
         fi
     }
     local exit_code

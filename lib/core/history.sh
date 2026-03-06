@@ -147,24 +147,12 @@ lacy_expand_references() {
     local query="$1"
     local refs_block=""
     local seen=":"
-    local tmp="$query"
     LACY_EXPANDED_REFS=()
     LACY_EXPANDED_QUERY="$query"
 
-    while [[ "$tmp" == *"@"* ]]; do
-        tmp="${tmp#*@}"
-        local token="${tmp%%[[:space:]]*}"
-        tmp="${tmp#"$token"}"
-
-        [[ -z "$token" ]] && continue
-
-        local ref_path="$token"
-        while [[ -n "$ref_path" ]]; do
-            case "${ref_path: -1}" in
-                ','|'.'|':'|';'|'!'|'?') ref_path="${ref_path%?}" ;;
-                *) break ;;
-            esac
-        done
+    local start end raw ref_path
+    while IFS=$'\t' read -r start end raw ref_path; do
+        [[ -n "$ref_path" ]] || continue
 
         lacy_is_safe_ref_path "$ref_path" || continue
         [[ -e "$ref_path" ]] || continue
@@ -223,7 +211,7 @@ lacy_expand_references() {
                 fi
             done < <(find "$ref_path" -maxdepth "${LACY_REF_DIR_MAX_DEPTH:-3}" -type f | LC_ALL=C sort)
         fi
-    done
+    done < <(lacy_ref_scan "$query")
 
     if [[ -z "$refs_block" ]]; then
         LACY_EXPANDED_QUERY="$query"

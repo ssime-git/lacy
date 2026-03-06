@@ -118,46 +118,52 @@ lacy_shell_longest_common_prefix() {
 }
 
 lacy_shell_at_complete_widget() {
-    # Extract the word up to the cursor
-    local before_cursor="${BUFFER[1,$CURSOR]}"
-    local cur_word="${before_cursor##* }"   # last space-delimited token
+    local token_info
+    token_info="$(lacy_ref_token_at_cursor "$BUFFER" "$CURSOR")"
 
-    if [[ "$cur_word" == @* ]]; then
-        local prefix="${cur_word#@}"
-        local -a matches
-        if [[ -n "$prefix" ]]; then
-            matches=( ${(N)~prefix}*(N) )
-        else
-            matches=( *(N) )
-        fi
-
-        if (( ${#matches} == 0 )); then
-            # No matches — fall through to default completion
-            zle expand-or-complete
-        elif (( ${#matches} == 1 )); then
-            # Single match — complete in-place
-            local insert="${matches[1]}"
-            [[ -d "$insert" ]] && insert="${insert}/"
-            local offset=$(( CURSOR - ${#cur_word} ))
-            BUFFER="${BUFFER[1,$offset]}@${insert}${BUFFER[$(( CURSOR + 1 )),-1]}"
-            CURSOR=$(( offset + ${#insert} + 1 ))
-        else
-            # Multiple matches — insert the shared prefix first, then list choices.
-            local common_prefix
-            common_prefix="$(lacy_shell_longest_common_prefix "${matches[@]}")"
-            if [[ -n "$common_prefix" && "$common_prefix" != "$prefix" ]]; then
-                local offset=$(( CURSOR - ${#cur_word} ))
-                BUFFER="${BUFFER[1,$offset]}@${common_prefix}${BUFFER[$(( CURSOR + 1 )),-1]}"
-                CURSOR=$(( offset + ${#common_prefix} + 1 ))
-            fi
-
-            local display
-            display=$(printf '\e[38;5;238m  @%s\e[0m\n' "${matches[@]}")
-            zle -M "$display"
-        fi
-    else
+    if [[ -z "$token_info" ]]; then
         # Default Tab behavior
         zle expand-or-complete
+        zle reset-prompt
+        return
+    fi
+
+    local start end raw prefix
+    IFS=$'\t' read -r start end raw prefix <<< "$token_info"
+
+    local -a matches
+    if [[ -n "$prefix" ]]; then
+        matches=( ${(N)~prefix}*(N) )
+    else
+        matches=( *(N) )
+    fi
+
+    if (( ${#matches} == 0 )); then
+        zle expand-or-complete
+    elif (( ${#matches} == 1 )); then
+        local insert="${matches[1]}"
+        [[ -d "$insert" ]] && insert="${insert}/"
+        insert="$(lacy_ref_escape_path "$insert")"
+        BUFFER="${BUFFER[1,$(( start - 1 ))]}@${insert}${BUFFER[$(( end + 1 )),-1]}"
+        CURSOR=$(( start + ${#insert} ))
+    else
+        local common_prefix
+        common_prefix="$(lacy_shell_longest_common_prefix "${matches[@]}")"
+        if [[ -n "$common_prefix" && "$common_prefix" != "$prefix" ]]; then
+            local escaped_prefix
+            escaped_prefix="$(lacy_ref_escape_path "$common_prefix")"
+            BUFFER="${BUFFER[1,$(( start - 1 ))]}@${escaped_prefix}${BUFFER[$(( end + 1 )),-1]}"
+            CURSOR=$(( start + ${#escaped_prefix} ))
+        fi
+
+        local display
+        local escaped_matches=()
+        local item
+        for item in "${matches[@]}"; do
+            escaped_matches+=( "$(lacy_ref_escape_path "$item")" )
+        done
+        display=$(printf '\e[38;5;238m  @%s\e[0m\n' "${escaped_matches[@]}")
+        zle -M "$display"
     fi
     zle reset-prompt
 }
