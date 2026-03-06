@@ -322,9 +322,9 @@ assert_false "in_list not found" _lacy_in_list "d" "a" "b" "c"
 
 # Tool cmd lookup
 source "$REPO_DIR/lib/core/mcp.sh"
-assert_eq "tool cmd lash" "lash run -c" "$(lacy_tool_cmd 'lash')"
-assert_eq "tool cmd claude" "claude -p" "$(lacy_tool_cmd 'claude')"
-assert_eq "tool cmd pi" "pi -p" "$(lacy_tool_cmd 'pi')"
+assert_true "tool cmd lash" test "$(lacy_tool_cmd 'lash' | sed 's#.*/##')" "=" "lash run -c"
+assert_true "tool cmd claude" test "$(lacy_tool_cmd 'claude' | sed 's#.*/##')" "=" "claude -p"
+assert_true "tool cmd pi" test "$(lacy_tool_cmd 'pi' | sed 's#.*/##')" "=" "pi -p"
 assert_eq "tool cmd unknown" "" "$(lacy_tool_cmd 'unknown')"
 assert_true "skip codex banner" _lacy_provider_skip_line "codex" "OpenAI Codex v0.71.0 (research preview)"
 assert_true "skip codex metadata" _lacy_provider_skip_line "codex" "workdir: /tmp/repo"

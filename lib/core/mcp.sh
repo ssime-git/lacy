@@ -90,6 +90,32 @@ _lacy_run_tool_cmd() {
     "${cmd_parts[@]}" "$query"
 }
 
+_lacy_resolve_tool_bin() {
+    local tool="$1"
+    local resolved=""
+
+    resolved="$(command -v "$tool" 2>/dev/null || true)"
+    if [[ -n "$resolved" ]]; then
+        printf '%s' "$resolved"
+        return 0
+    fi
+
+    case "$tool" in
+        opencode)
+            if [[ -x "${HOME}/.opencode/bin/opencode" ]]; then
+                printf '%s' "${HOME}/.opencode/bin/opencode"
+                return 0
+            fi
+            if [[ -n "${SUDO_USER:-}" && -x "/home/${SUDO_USER}/.opencode/bin/opencode" ]]; then
+                printf '%s' "/home/${SUDO_USER}/.opencode/bin/opencode"
+                return 0
+            fi
+            ;;
+    esac
+
+    return 1
+}
+
 _lacy_agent_can_use_tty() {
     [[ -t 0 || -t 1 ]]
 }
@@ -146,13 +172,32 @@ _lacy_render_normalized_blob() {
 # Tool registry — function-based for maximum portability
 # Usage: cmd=$(lacy_tool_cmd <tool_name>)
 lacy_tool_cmd() {
+    local tool_bin=""
     case "$1" in
-        lash)     echo "lash run -c" ;;
-        claude)   echo "claude -p" ;;
-        opencode) echo "opencode run -c" ;;
-        pi)       echo "pi -p" ;;
-        gemini)   echo "gemini --resume -p" ;;
-        codex)    echo "codex exec resume --last" ;;
+        lash)
+            tool_bin="$(_lacy_resolve_tool_bin lash 2>/dev/null || printf 'lash')"
+            echo "${tool_bin} run -c"
+            ;;
+        claude)
+            tool_bin="$(_lacy_resolve_tool_bin claude 2>/dev/null || printf 'claude')"
+            echo "${tool_bin} -p"
+            ;;
+        opencode)
+            tool_bin="$(_lacy_resolve_tool_bin opencode 2>/dev/null || printf 'opencode')"
+            echo "${tool_bin} run -c"
+            ;;
+        pi)
+            tool_bin="$(_lacy_resolve_tool_bin pi 2>/dev/null || printf 'pi')"
+            echo "${tool_bin} -p"
+            ;;
+        gemini)
+            tool_bin="$(_lacy_resolve_tool_bin gemini 2>/dev/null || printf 'gemini')"
+            echo "${tool_bin} --resume -p"
+            ;;
+        codex)
+            tool_bin="$(_lacy_resolve_tool_bin codex 2>/dev/null || printf 'codex')"
+            echo "${tool_bin} exec resume --last"
+            ;;
         *)        echo "" ;;
     esac
 }

@@ -164,9 +164,20 @@ lacy_ref_token_at_cursor() {
     local query="$1"
     local cursor="$2"
     local match=""
-    local start end raw path
+    local start end raw path line
 
-    while IFS=$'\t' read -r start end raw path; do
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        if [[ "$LACY_SHELL_TYPE" == "zsh" ]]; then
+            local -a parts
+            parts=( ${(ps:\t:)line} )
+            start="${parts[1]}"
+            end="${parts[2]}"
+            raw="${parts[3]}"
+            path="${parts[4]}"
+        else
+            IFS=$'\t' read -r start end raw path <<< "$line"
+        fi
         [[ -z "$start" ]] && continue
         if (( cursor >= start && cursor <= end )); then
             printf '%s\t%s\t%s\t%s\n' "$start" "$end" "$raw" "$path"
