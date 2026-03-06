@@ -119,7 +119,22 @@ lacy_shell_longest_common_prefix() {
 
 lacy_shell_at_complete_widget() {
     local token_info
-    token_info="$(lacy_ref_token_at_cursor "$BUFFER" "$CURSOR")"
+    local scan_output
+    scan_output="$(lacy_ref_scan "$BUFFER")"
+    local -a lines token_parts
+    local line
+    lines=( ${(f)scan_output} )
+    for line in "${lines[@]}"; do
+        [[ -z "$line" ]] && continue
+        token_parts=( ${(ps:\t:)line} )
+        if (( CURSOR >= token_parts[1] && CURSOR <= token_parts[2] )); then
+            token_info="$line"
+            break
+        fi
+        if (( CURSOR == token_parts[2] + 1 )); then
+            token_info="$line"
+        fi
+    done
 
     if [[ -z "$token_info" ]]; then
         # Default Tab behavior
