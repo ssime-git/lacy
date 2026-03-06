@@ -181,24 +181,50 @@ lacy_agent_normalize_blob() {
     printf '%s\n' "$payload"
 }
 
+lacy_agent_normalize_line() {
+    local tool="$1"
+    local line="$2"
+
+    _lacy_provider_skip_line "$tool" "$line" && return 0
+
+    if lacy_is_event_line "$line"; then
+        printf '%s\n' "$line"
+        return 0
+    fi
+
+    if [[ "$line" == "{"* || "$line" == "["* ]]; then
+        if _lacy_parse_json_event_blob "$tool" "$line" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    case "$tool" in
+        opencode)
+            case "$line" in
+                "> "*)
+                    lacy_emit_event "status" "${line#> }"
+                    return 0
+                    ;;
+                "✱ "*)
+                    lacy_emit_event "action_start" "${line#✱ }" ""
+                    return 0
+                    ;;
+                "→ "*)
+                    lacy_emit_event "action_result" "${line#→ }" "ok" ""
+                    return 0
+                    ;;
+            esac
+            ;;
+    esac
+
+    printf '%s\n' "$line"
+}
+
 lacy_agent_normalize_stream() {
     local tool="$1"
     local line
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        _lacy_provider_skip_line "$tool" "$line" && continue
-
-        if lacy_is_event_line "$line"; then
-            printf '%s\n' "$line"
-            continue
-        fi
-
-        if [[ "$line" == "{"* || "$line" == "["* ]]; then
-            if _lacy_parse_json_event_blob "$tool" "$line" 2>/dev/null; then
-                continue
-            fi
-        fi
-
-        printf '%s\n' "$line"
+        lacy_agent_normalize_line "$tool" "$line"
     done
 }

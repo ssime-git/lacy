@@ -129,7 +129,16 @@ lacy_shell_at_complete_widget() {
     fi
 
     local start end raw prefix
-    IFS=$'\t' read -r start end raw prefix <<< "$token_info"
+    if [[ "$LACY_SHELL_TYPE" == "zsh" ]]; then
+        local -a token_parts
+        token_parts=( ${(ps:\t:)token_info} )
+        start="${token_parts[1]}"
+        end="${token_parts[2]}"
+        raw="${token_parts[3]}"
+        prefix="${token_parts[4]}"
+    else
+        IFS=$'\t' read -r start end raw prefix <<< "$token_info"
+    fi
 
     local -a matches
     if [[ -n "$prefix" ]]; then

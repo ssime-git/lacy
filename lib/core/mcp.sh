@@ -590,7 +590,8 @@ EOF
     lacy_show_agent_step "Waiting for response"
     _lacy_run_tool_cmd_with_io "$cmd" "$query" "${LACY_CUSTOM_TOOL_TTY_REQUIRED:-false}" 2>&1 | {
         local _spinner_killed=false
-        local _buffer=""
+        local _first_output_line=""
+        local _line_count=0
         while IFS= read -r line; do
             if ! $_spinner_killed; then
                 if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
@@ -600,16 +601,19 @@ EOF
                 fi
                 _spinner_killed=true
             fi
-            _buffer+="$line"$'\n'
+            (( _line_count++ ))
+            if (( _line_count == 1 )); then
+                _first_output_line="$line"
+            fi
+            lacy_agent_normalize_line "$tool" "$line"
         done
         if ! $_spinner_killed && [[ -n "$LACY_SPINNER_PID" ]]; then
             kill "$LACY_SPINNER_PID" 2>/dev/null
             sleep "$LACY_TERMINAL_FLUSH_DELAY"
             printf '\e[2K\r\e[?25h\e[?7h'
         fi
-        if [[ -n "$_buffer" ]]; then
-            local _trimmed="${_buffer%$'\n'}"
-            lacy_format_tool_error "$_trimmed" "$tool" || _lacy_render_normalized_blob "$tool" "$_trimmed"
+        if (( _line_count == 1 )); then
+            lacy_format_tool_error "$_first_output_line" "$tool" >/dev/null 2>&1 || true
         fi
     }
     local exit_code
