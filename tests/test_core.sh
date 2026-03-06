@@ -322,7 +322,11 @@ assert_false "in_list not found" _lacy_in_list "d" "a" "b" "c"
 source "$REPO_DIR/lib/core/mcp.sh"
 assert_eq "tool cmd lash" "lash run -c" "$(lacy_tool_cmd 'lash')"
 assert_eq "tool cmd claude" "claude -p" "$(lacy_tool_cmd 'claude')"
+assert_eq "tool cmd pi" "pi -p" "$(lacy_tool_cmd 'pi')"
 assert_eq "tool cmd unknown" "" "$(lacy_tool_cmd 'unknown')"
+assert_true "skip codex banner" _lacy_should_skip_stream_line "OpenAI Codex v0.71.0 (research preview)"
+assert_true "skip codex metadata" _lacy_should_skip_stream_line "workdir: /tmp/repo"
+assert_false "do not skip normal output" _lacy_should_skip_stream_line "Here is the answer"
 
 # ============================================================================
 # History and Reference Tests
@@ -362,11 +366,14 @@ printf 'root file\n' > "$TEST_TMPDIR/root.txt"
 
 (
     cd "$TEST_TMPDIR" || exit 1
-    expanded_refs="$(lacy_expand_references 'check @root.txt and @refdir please')"
+    lacy_expand_references 'check @root.txt and @refdir please'
+    expanded_refs="$LACY_EXPANDED_QUERY"
     assert_contains "file ref metadata" "$expanded_refs" "FILE @root.txt"
     assert_contains "dir ref metadata" "$expanded_refs" "DIRECTORY @refdir"
     assert_contains "dir entry listing" "$expanded_refs" "refdir/nested/inner.txt"
     assert_contains "query preserved after refs" "$expanded_refs" "check @root.txt and @refdir please"
+    assert_contains "expanded refs state includes file" "${LACY_EXPANDED_REFS[*]}" "file:root.txt"
+    assert_contains "expanded refs state includes dir" "${LACY_EXPANDED_REFS[*]}" "dir:refdir"
 )
 
 # ============================================================================

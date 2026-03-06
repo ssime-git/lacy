@@ -8,6 +8,7 @@ LACY_LAST_CMD=""
 
 # Populated by lacy_expand_references and read by mcp.sh
 LACY_EXPANDED_REFS=()
+LACY_EXPANDED_QUERY=""
 
 lacy_history_log() {
     local cmd="$1"
@@ -148,6 +149,7 @@ lacy_expand_references() {
     local seen=":"
     local tmp="$query"
     LACY_EXPANDED_REFS=()
+    LACY_EXPANDED_QUERY="$query"
 
     while [[ "$tmp" == *"@"* ]]; do
         tmp="${tmp#*@}"
@@ -224,11 +226,11 @@ lacy_expand_references() {
     done
 
     if [[ -z "$refs_block" ]]; then
-        printf '%s' "$query"
+        LACY_EXPANDED_QUERY="$query"
         return
     fi
 
-    printf '%s\n%s\n\n%s' \
+    printf -v LACY_EXPANDED_QUERY '%s\n%s\n\n%s' \
         "[Lacy referenced paths]" \
         "${refs_block#$'\n'}" \
         "$query"

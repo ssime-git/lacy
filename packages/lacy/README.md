@@ -43,7 +43,7 @@ Lacy routes natural language to AI and commands to your shell — automatically.
 ❯ fix the build error   → AI answers
 ```
 
-Works with: **lash**, **claude**, **opencode**, **gemini**, **codex**
+Works with: **lash**, **claude**, **opencode**, **pi**, **gemini**, **codex**
 
 ## Alternative Install Methods
 

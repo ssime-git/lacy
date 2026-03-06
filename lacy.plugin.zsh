@@ -9,7 +9,9 @@ fi
 LACY_SHELL_LOADED=true
 
 # Plugin directory
-LACY_SHELL_DIR="${0:A:h}"
+# In Zsh, $0 points to the shell when this file is sourced from .zshrc.
+# %N resolves to the current sourced file path.
+LACY_SHELL_DIR="${${(%):-%N}:A:h}"
 
 # Shell type identification (used by shared core)
 LACY_SHELL_TYPE="zsh"
@@ -38,6 +40,7 @@ lacy_shell_cleanup() {
     lacy_preheat_cleanup
     lacy_shell_cleanup_mcp
     lacy_shell_cleanup_keybindings
+    zshexit_functions=(${zshexit_functions:#lacy_shell_cleanup})
     unfunction TRAPINT 2>/dev/null
     trap - INT
     unsetopt IGNORE_EOF
@@ -56,7 +59,7 @@ lacy_shell_activate() {
     fi
 
     LACY_SHELL_ENABLED=true
-    export LACY_SHELL_ACTIVE=1
+    typeset -gx LACY_SHELL_ACTIVE=1
 
     # Hook into ZSH
     zle -N accept-line lacy_shell_smart_accept_line
@@ -64,7 +67,7 @@ lacy_shell_activate() {
     precmd_functions+=(lacy_shell_precmd)
 
     lacy_shell_init
-    trap lacy_shell_cleanup EXIT
+    zshexit_functions+=(lacy_shell_cleanup)
 }
 
 # lacy() — persistent shell function, survives deactivation.

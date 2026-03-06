@@ -150,17 +150,18 @@ lacy_preheat_server_query() {
         return 1
     fi
 
+    local parsed_response=""
     if command -v jq >/dev/null 2>&1; then
-        printf '%s\n' "$response" | jq -r '
+        parsed_response=$(printf '%s\n' "$response" | jq -r '
             if type == "array" then
                 [.[] | select(.role == "assistant") | .parts[]? | select(.type == "text") | .text] | last // empty
             elif .parts then
                 [.parts[] | select(.type == "text") | .text] | join("\n") // empty
             else
                 .result // .content // .text // .response // .message // empty
-            end' 2>/dev/null
+            end' 2>/dev/null)
     elif command -v python3 >/dev/null 2>&1; then
-        printf '%s\n' "$response" | python3 -c "
+        parsed_response=$(printf '%s\n' "$response" | python3 -c "
 import json, sys
 data = sys.stdin.read().strip()
 for line in reversed(data.split('\n')):
@@ -181,10 +182,18 @@ for line in reversed(data.split('\n')):
                 val = obj.get(key)
                 if val and isinstance(val, str): print(val); sys.exit(0)
     except (json.JSONDecodeError, KeyError, TypeError): continue
-print(data)" 2>/dev/null
+print(data)" 2>/dev/null)
     else
-        printf '%s' "$response" | sed 's/.*"text"[[:space:]]*:[[:space:]]*"//' | sed 's/"[[:space:]]*[,}\]].*//' | sed 's/\\n/\'$'\n''/g; s/\\"/"/g; s/\\\\/\\/g'
+        parsed_response=$(printf '%s' "$response" | sed 's/.*"text"[[:space:]]*:[[:space:]]*"//' | sed 's/"[[:space:]]*[,}\]].*//' | sed 's/\\n/\'$'\n''/g; s/\\"/"/g; s/\\\\/\\/g')
     fi
+
+    if [[ "$parsed_response" == *"Session not found"* ]]; then
+        LACY_PREHEAT_SERVER_SESSION_ID=""
+        rm -f "$LACY_PREHEAT_SERVER_SESSION_FILE"
+        return 1
+    fi
+
+    printf '%s' "$parsed_response"
 }
 
 # Stop background server and clean up

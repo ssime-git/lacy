@@ -90,6 +90,29 @@ _lacy_run_tool_cmd() {
     "${cmd_parts[@]}" "$query"
 }
 
+_lacy_should_skip_stream_line() {
+    local line="$1"
+
+    case "$line" in
+        "OpenAI Codex v"*) return 0 ;;
+        "--------") return 0 ;;
+        "workdir: "*) return 0 ;;
+        "model: "*) return 0 ;;
+        "provider: "*) return 0 ;;
+        "approval: "*) return 0 ;;
+        "sandbox: "*) return 0 ;;
+        "reasoning effort: "*) return 0 ;;
+        "reasoning summaries: "*) return 0 ;;
+        "session id: "*) return 0 ;;
+        "user") return 0 ;;
+        "mcp startup: "*) return 0 ;;
+        "Reconnecting... "*) return 0 ;;
+        "tokens used") return 0 ;;
+    esac
+
+    return 1
+}
+
 # Tool registry — function-based for maximum portability
 # Usage: cmd=$(lacy_tool_cmd <tool_name>)
 lacy_tool_cmd() {
@@ -97,6 +120,7 @@ lacy_tool_cmd() {
         lash)     echo "lash run -c" ;;
         claude)   echo "claude -p" ;;
         opencode) echo "opencode run -c" ;;
+        pi)       echo "pi -p" ;;
         gemini)   echo "gemini --resume -p" ;;
         codex)    echo "codex exec resume --last" ;;
         *)        echo "" ;;
@@ -243,7 +267,8 @@ except: pass" 2>/dev/null)
 lacy_shell_query_agent() {
     local query
     lacy_show_agent_step "Preparing request"
-    query=$(lacy_expand_references "$1")
+    lacy_expand_references "$1"
+    query="$LACY_EXPANDED_QUERY"
 
     local _ref
     for _ref in "${LACY_EXPANDED_REFS[@]}"; do
@@ -257,7 +282,7 @@ lacy_shell_query_agent() {
     local _auto_detected=false
     if [[ -z "$tool" ]]; then
         local t
-        for t in lash claude opencode gemini codex; do
+        for t in lash claude opencode pi gemini codex; do
             if command -v "$t" >/dev/null 2>&1; then
                 tool="$t"
                 _auto_detected=true
@@ -344,6 +369,7 @@ EOF
                 echo "  lash:     npm install -g lashcode"
                 echo "  claude:   brew install claude"
                 echo "  opencode: brew install opencode"
+                echo "  pi:       see https://shittycodingagent.ai/"
                 echo "  gemini:   brew install gemini"
                 echo "  codex:    npm install -g @openai/codex"
                 return 1
@@ -354,6 +380,7 @@ EOF
             echo "  npm install -g lashcode     (recommended) — lash.lacy.sh"
             echo "  brew install claude"
             echo "  brew install opencode"
+            echo "  pi                         — shittycodingagent.ai"
             echo "  brew install gemini"
             echo "  npm install -g @openai/codex"
             return 1
@@ -484,13 +511,14 @@ EOF
     lacy_show_agent_step "Waiting for response"
     _lacy_run_tool_cmd "$cmd" "$query" </dev/tty 2>&1 | {
         local _spinner_killed=false
-        local _full_output=""
+        local _first_output_line=""
         local _line_count=0
         _lacy_reset_render_state
         while IFS= read -r line; do
             # Skip agent startup noise (e.g. "> build · big-pickle", "exit_code=0")
             [[ "$line" =~ ^'> '[a-z]+' · ' ]] && continue
             [[ "$line" =~ ^exit_code= ]] && continue
+            _lacy_should_skip_stream_line "$line" && continue
             if ! $_spinner_killed; then
                 if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
                     kill "$LACY_SPINNER_PID" 2>/dev/null
@@ -499,16 +527,17 @@ EOF
                 fi
                 _spinner_killed=true
             fi
-            _full_output+="$line"
             (( _line_count++ ))
-            # Only buffer first line to check for JSON errors
-            if (( _line_count > 1 )); then
-                # Multi-line output — not a JSON error blob, flush everything
-                if [[ $_line_count -eq 2 ]]; then
-                    _lacy_render_stream_line "$_full_output"
-                fi
-                _lacy_render_stream_line "$line"
+            # Keep the first line buffered to detect single-line JSON error blobs.
+            if (( _line_count == 1 )); then
+                _first_output_line="$line"
+                continue
             fi
+
+            if (( _line_count == 2 )); then
+                _lacy_render_stream_line "$_first_output_line"
+            fi
+            _lacy_render_stream_line "$line"
         done
         if ! $_spinner_killed && [[ -n "$LACY_SPINNER_PID" ]]; then
             kill "$LACY_SPINNER_PID" 2>/dev/null
@@ -517,7 +546,7 @@ EOF
         fi
         # Single-line output — check if it's a JSON error
         if (( _line_count <= 1 )); then
-            lacy_format_tool_error "$_full_output" "$tool" || _lacy_render_stream_line "$_full_output"
+            lacy_format_tool_error "$_first_output_line" "$tool" || _lacy_render_stream_line "$_first_output_line"
         fi
     }
     local exit_code

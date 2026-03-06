@@ -79,7 +79,13 @@ lacy_shell_execute_agent() {
     local query="$1"
 
     if ! lacy_shell_query_agent "$query"; then
-        if [[ -z "$LACY_ACTIVE_TOOL" ]] && ! command -v lash >/dev/null 2>&1 && ! command -v claude >/dev/null 2>&1; then
+        if [[ -z "$LACY_ACTIVE_TOOL" ]] && \
+           ! command -v lash >/dev/null 2>&1 && \
+           ! command -v claude >/dev/null 2>&1 && \
+           ! command -v opencode >/dev/null 2>&1 && \
+           ! command -v pi >/dev/null 2>&1 && \
+           ! command -v gemini >/dev/null 2>&1 && \
+           ! command -v codex >/dev/null 2>&1; then
             # No tool found at all
             echo ""
             lacy_print_color 196 "  No AI tool configured"
@@ -92,7 +98,7 @@ lacy_shell_execute_agent() {
             local _tool="${LACY_ACTIVE_TOOL}"
             if [[ -z "$_tool" ]]; then
                 local _t
-                for _t in lash claude opencode gemini codex; do
+                for _t in lash claude opencode pi gemini codex; do
                     if command -v "$_t" >/dev/null 2>&1; then
                         _tool="$_t"
                         break
@@ -233,7 +239,7 @@ lacy_shell_tool() {
             elif [[ -z "$LACY_ACTIVE_TOOL" ]]; then
                 local _detected=""
                 local _t
-                for _t in lash claude opencode gemini codex; do
+                for _t in lash claude opencode pi gemini codex; do
                     if command -v "$_t" >/dev/null 2>&1; then
                         _detected="$_t"
                         break
@@ -250,7 +256,7 @@ lacy_shell_tool() {
             echo ""
             echo "Available tools:"
             local t
-            for t in lash claude opencode gemini codex; do
+            for t in lash claude opencode pi gemini codex; do
                 if command -v "$t" >/dev/null 2>&1; then
                     printf '  \e[38;5;34m✓\e[0m %s\n' "$t"
                 else
@@ -270,7 +276,7 @@ lacy_shell_tool() {
         set)
             if [[ -z "$2" ]]; then
                 echo "Usage: tool set <name>"
-                echo "Options: lash, claude, opencode, gemini, codex, custom, auto"
+                echo "Options: lash, claude, opencode, pi, gemini, codex, custom, auto"
                 echo "  tool set custom \"command -flags\""
                 return 1
             fi
@@ -298,7 +304,7 @@ lacy_shell_tool() {
             ;;
         *)
             echo "Usage: tool [set <name>]"
-            echo "Options: lash, claude, opencode, gemini, codex, custom, auto"
+            echo "Options: lash, claude, opencode, pi, gemini, codex, custom, auto"
             ;;
     esac
 }
