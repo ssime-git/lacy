@@ -164,29 +164,42 @@ lacy_ref_token_at_cursor() {
     local query="$1"
     local cursor="$2"
     local match=""
-    local start end raw path line
+    local start end raw path scan_output line
+    scan_output="$(lacy_ref_scan "$query")"
 
-    while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        if [[ "$LACY_SHELL_TYPE" == "zsh" ]]; then
-            local -a parts
+    if [[ "$LACY_SHELL_TYPE" == "zsh" ]]; then
+        local -a lines parts
+        lines=( ${(f)scan_output} )
+        for line in "${lines[@]}"; do
+            [[ -z "$line" ]] && continue
             parts=( ${(ps:\t:)line} )
             start="${parts[1]}"
             end="${parts[2]}"
             raw="${parts[3]}"
             path="${parts[4]}"
-        else
+            [[ -z "$start" ]] && continue
+            if (( cursor >= start && cursor <= end )); then
+                printf '%s\t%s\t%s\t%s\n' "$start" "$end" "$raw" "$path"
+                return 0
+            fi
+            if (( cursor == end + 1 )); then
+                match="$(printf '%s\t%s\t%s\t%s' "$start" "$end" "$raw" "$path")"
+            fi
+        done
+    else
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
             IFS=$'\t' read -r start end raw path <<< "$line"
-        fi
-        [[ -z "$start" ]] && continue
-        if (( cursor >= start && cursor <= end )); then
-            printf '%s\t%s\t%s\t%s\n' "$start" "$end" "$raw" "$path"
-            return 0
-        fi
-        if (( cursor == end + 1 )); then
-            match="$(printf '%s\t%s\t%s\t%s' "$start" "$end" "$raw" "$path")"
-        fi
-    done < <(lacy_ref_scan "$query")
+            [[ -z "$start" ]] && continue
+            if (( cursor >= start && cursor <= end )); then
+                printf '%s\t%s\t%s\t%s\n' "$start" "$end" "$raw" "$path"
+                return 0
+            fi
+            if (( cursor == end + 1 )); then
+                match="$(printf '%s\t%s\t%s\t%s' "$start" "$end" "$raw" "$path")"
+            fi
+        done <<< "$scan_output"
+    fi
 
     [[ -n "$match" ]] || return 1
     printf '%s\n' "$match"
