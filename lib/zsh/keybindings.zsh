@@ -102,10 +102,14 @@ lacy_shell_at_complete_widget() {
     local before_cursor="${BUFFER[1,$CURSOR]}"
     local cur_word="${before_cursor##* }"   # last space-delimited token
 
-    if [[ "$cur_word" == @?* ]]; then
+    if [[ "$cur_word" == @* ]]; then
         local prefix="${cur_word#@}"
         local -a matches
-        matches=( ${(N)~prefix}*(N) )
+        if [[ -n "$prefix" ]]; then
+            matches=( ${(N)~prefix}*(N) )
+        else
+            matches=( *(N) )
+        fi
 
         if (( ${#matches} == 0 )); then
             # No matches — fall through to default completion
