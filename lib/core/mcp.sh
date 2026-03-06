@@ -184,7 +184,7 @@ lacy_tool_cmd() {
             ;;
         opencode)
             tool_bin="$(_lacy_resolve_tool_bin opencode 2>/dev/null || printf 'opencode')"
-            echo "${tool_bin} run -c"
+            echo "${tool_bin} run --format json --thinking -c"
             ;;
         pi)
             tool_bin="$(_lacy_resolve_tool_bin pi 2>/dev/null || printf 'pi')"
