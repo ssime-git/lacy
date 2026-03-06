@@ -116,8 +116,9 @@ Minimum 2 words required. See `docs/NATURAL_LANGUAGE_DETECTION.md` for full algo
 | Tool     | Command                | Prompt Flag  |
 | -------- | ---------------------- | ------------ |
 | lash (recommended) | `lash run -c "query"`  | `-c`         |
-| Codex   | `Codex -p "query"`    | `-p`         |
+| claude   | `claude -p "query"`    | `-p`         |
 | opencode | `opencode run -c "query"` | `-c`         |
+| pi       | `pi -p "query"` | `-p`         |
 | gemini   | `gemini --resume -p "query"` | `-p`         |
 | codex    | `codex exec resume --last "query"` | positional   |
 | custom   | user-defined command   | user-defined |
@@ -199,12 +200,60 @@ node packages/lacy/index.mjs --help   # help text
 LACY_NO_NODE=1 bin/lacy setup
 ```
 
+### Testing the repo plugin without touching `~/.lacy`
+
+Use the repo-backed dev shell:
+
+```bash
+./scripts/dev-zsh.sh
+```
+
+This starts an isolated ZSH session that:
+
+- loads `lacy.plugin.zsh` from the repository
+- writes config/state under `/tmp/lacy-test-home/.lacy` by default
+- does **not** modify your real `~/.lacy`
+- still uses your real local agent CLI (`codex`, `lash`, `claude`, etc.) under the hood
+- uses `opencode` by default unless `LACY_DEV_TOOL=...` is set
+
+Optional overrides:
+
+```bash
+LACY_DEV_TOOL=lash ./scripts/dev-zsh.sh
+LACY_DEV_HOME=/tmp/my-lacy-dev ./scripts/dev-zsh.sh
+```
+
+Exit with `exit`.
+
+### Deterministic local smoke tests
+
+For an isolated smoke test that does not depend on your real agent CLI, use the bundled fake agent:
+
+```bash
+./scripts/smoke-agent.sh
+```
+
+This validates the repo plugin with:
+
+- processing steps enabled
+- `<thinking>` rendering
+- todo-list rendering
+- `@file` and `@folder` prompt expansion
+
+For a fully isolated interactive shell in Docker:
+
+```bash
+docker compose -f docker-compose.dev.yml run --rm lacy-dev
+```
+
+This builds `Dockerfile.dev`, mounts the repo at `/workspace`, and starts `./scripts/dev-zsh.sh` with `agent_tools.active: custom` pointing to `scripts/fake-agent.sh`.
+
 ## Key Commands
 
 - `mode [shell|agent|auto]` - Switch modes
 - `mode` - Show current mode and color legend
 - `tool` - Show active AI tool and available tools
-- `tool set <name>` - Set AI tool (lash, Codex, opencode, gemini, codex, custom, auto)
+- `tool set <name>` - Set AI tool (lash, claude, opencode, pi, gemini, codex, custom, auto)
 - `tool set custom "cmd"` - Set a custom command as the AI tool
 - `ask "question"` - Direct query to agent
 - `quit` / `stop` / `exit` - Exit lacy shell
@@ -231,7 +280,7 @@ Config file: `~/.lacy/config.yaml`
 
 ```yaml
 agent_tools:
-  active: Codex # or lash, opencode, gemini, codex, custom, empty for auto
+  active: Codex # or lash, claude, opencode, pi, gemini, codex, custom, empty for auto
   # custom_command: "your-command -flags"  # used when active: custom
 
 api_keys:

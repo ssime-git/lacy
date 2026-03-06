@@ -97,35 +97,97 @@ zle -N zle-line-pre-redraw lacy_shell_line_pre_redraw
 # complete it as a filename (stripping the @ for matching, re-adding it
 # when inserting). Falls through to normal ZSH completion otherwise.
 # ============================================================================
+lacy_shell_longest_common_prefix() {
+    local -a values
+    values=("$@")
+
+    (( ${#values[@]} > 0 )) || return 1
+
+    local prefix="${values[1]}"
+    local value i
+    for value in "${values[@]:1}"; do
+        i=0
+        while (( i < ${#prefix} && i < ${#value} )) && [[ "${prefix:$i:1}" == "${value:$i:1}" ]]; do
+            (( i++ ))
+        done
+        prefix="${prefix:0:$i}"
+        [[ -n "$prefix" ]] || break
+    done
+
+    printf '%s' "$prefix"
+}
+
 lacy_shell_at_complete_widget() {
-    # Extract the word up to the cursor
-    local before_cursor="${BUFFER[1,$CURSOR]}"
-    local cur_word="${before_cursor##* }"   # last space-delimited token
-
-    if [[ "$cur_word" == @?* ]]; then
-        local prefix="${cur_word#@}"
-        local -a matches
-        matches=( ${(N)~prefix}*(N) )
-
-        if (( ${#matches} == 0 )); then
-            # No matches — fall through to default completion
-            zle expand-or-complete
-        elif (( ${#matches} == 1 )); then
-            # Single match — complete in-place
-            local insert="${matches[1]}"
-            [[ -d "$insert" ]] && insert="${insert}/"
-            local offset=$(( CURSOR - ${#cur_word} ))
-            BUFFER="${BUFFER[1,$offset]}@${insert}${BUFFER[$(( CURSOR + 1 )),-1]}"
-            CURSOR=$(( offset + ${#insert} + 1 ))
-        else
-            # Multiple matches — list them in dim gray and let user keep typing
-            local display
-            display=$(printf '\e[38;5;238m  @%s\e[0m\n' "${matches[@]}")
-            zle -M "$display"
+    local token_info
+    local scan_output
+    scan_output="$(lacy_ref_scan "$BUFFER")"
+    local -a lines token_parts
+    local line
+    lines=( ${(f)scan_output} )
+    for line in "${lines[@]}"; do
+        [[ -z "$line" ]] && continue
+        token_parts=( ${(ps:\t:)line} )
+        if (( CURSOR >= token_parts[1] && CURSOR <= token_parts[2] )); then
+            token_info="$line"
+            break
         fi
-    else
+        if (( CURSOR == token_parts[2] + 1 )); then
+            token_info="$line"
+        fi
+    done
+
+    if [[ -z "$token_info" ]]; then
         # Default Tab behavior
         zle expand-or-complete
+        zle reset-prompt
+        return
+    fi
+
+    local start end raw prefix
+    if [[ "$LACY_SHELL_TYPE" == "zsh" ]]; then
+        local -a token_parts
+        token_parts=( ${(ps:\t:)token_info} )
+        start="${token_parts[1]}"
+        end="${token_parts[2]}"
+        raw="${token_parts[3]}"
+        prefix="${token_parts[4]}"
+    else
+        IFS=$'\t' read -r start end raw prefix <<< "$token_info"
+    fi
+
+    local -a matches
+    if [[ -n "$prefix" ]]; then
+        matches=( ${(N)~prefix}*(N) )
+    else
+        matches=( *(N) )
+    fi
+
+    if (( ${#matches} == 0 )); then
+        zle expand-or-complete
+    elif (( ${#matches} == 1 )); then
+        local insert="${matches[1]}"
+        [[ -d "$insert" ]] && insert="${insert}/"
+        insert="$(lacy_ref_escape_path "$insert")"
+        BUFFER="${BUFFER[1,$(( start - 1 ))]}@${insert}${BUFFER[$(( end + 1 )),-1]}"
+        CURSOR=$(( start + ${#insert} ))
+    else
+        local common_prefix
+        common_prefix="$(lacy_shell_longest_common_prefix "${matches[@]}")"
+        if [[ -n "$common_prefix" && "$common_prefix" != "$prefix" ]]; then
+            local escaped_prefix
+            escaped_prefix="$(lacy_ref_escape_path "$common_prefix")"
+            BUFFER="${BUFFER[1,$(( start - 1 ))]}@${escaped_prefix}${BUFFER[$(( end + 1 )),-1]}"
+            CURSOR=$(( start + ${#escaped_prefix} ))
+        fi
+
+        local display
+        local escaped_matches=()
+        local item
+        for item in "${matches[@]}"; do
+            escaped_matches+=( "$(lacy_ref_escape_path "$item")" )
+        done
+        display=$(printf '\e[38;5;238m  @%s\e[0m\n' "${escaped_matches[@]}")
+        zle -M "$display"
     fi
     zle reset-prompt
 }

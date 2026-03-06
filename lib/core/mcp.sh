@@ -90,15 +90,139 @@ _lacy_run_tool_cmd() {
     "${cmd_parts[@]}" "$query"
 }
 
+_lacy_resolve_tool_bin() {
+    local tool="$1"
+    local resolved=""
+
+    resolved="$(command -v "$tool" 2>/dev/null || true)"
+    if [[ -n "$resolved" ]]; then
+        printf '%s' "$resolved"
+        return 0
+    fi
+
+    case "$tool" in
+        opencode)
+            if [[ -x "${HOME}/.opencode/bin/opencode" ]]; then
+                printf '%s' "${HOME}/.opencode/bin/opencode"
+                return 0
+            fi
+            if [[ -n "${SUDO_USER:-}" && -x "/home/${SUDO_USER}/.opencode/bin/opencode" ]]; then
+                printf '%s' "/home/${SUDO_USER}/.opencode/bin/opencode"
+                return 0
+            fi
+            ;;
+    esac
+
+    return 1
+}
+
+_lacy_timeout_bin() {
+    if command -v gtimeout >/dev/null 2>&1; then
+        printf '%s' "$(command -v gtimeout)"
+        return 0
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+        printf '%s' "$(command -v timeout)"
+        return 0
+    fi
+    return 1
+}
+
+_lacy_agent_can_use_tty() {
+    [[ -t 0 || -t 1 ]]
+}
+
+_lacy_agent_stdio_mode() {
+    local requested="${LACY_AGENT_IO_MODE:-auto}"
+    case "$requested" in
+        interactive-pty|non-interactive-safe)
+            printf '%s' "$requested"
+            ;;
+        *)
+            if _lacy_agent_can_use_tty; then
+                printf 'interactive-pty'
+            else
+                printf 'non-interactive-safe'
+            fi
+            ;;
+    esac
+}
+
+_lacy_run_tool_cmd_with_io() {
+    local cmd_str="$1"
+    local query="$2"
+    local tty_required="${3:-false}"
+    local io_override="${4:-auto}"
+    local io_mode
+    if [[ "$io_override" == "auto" ]]; then
+        io_mode="$(_lacy_agent_stdio_mode)"
+    else
+        io_mode="$io_override"
+    fi
+
+    if [[ "$tty_required" == "true" && "$io_mode" != "interactive-pty" ]]; then
+        printf '%s\n' "Agent requires an interactive TTY. Retry from an interactive shell or set LACY_AGENT_IO_MODE=interactive-pty." >&2
+        return 97
+    fi
+
+    case "$io_mode" in
+        interactive-pty)
+            _lacy_run_tool_cmd "$cmd_str" "$query" </dev/tty
+            ;;
+        non-interactive-safe)
+            _lacy_run_tool_cmd "$cmd_str" "$query" </dev/null
+            ;;
+    esac
+}
+
+_lacy_render_normalized_stream() {
+    local tool="$1"
+    lacy_agent_normalize_stream "$tool" | lacy_render_response
+}
+
+_lacy_render_normalized_blob() {
+    local tool="$1"
+    local payload="$2"
+    lacy_agent_normalize_blob "$tool" "$payload" | lacy_render_response
+}
+
 # Tool registry — function-based for maximum portability
 # Usage: cmd=$(lacy_tool_cmd <tool_name>)
 lacy_tool_cmd() {
+    local tool_bin=""
     case "$1" in
-        lash)     echo "lash run -c" ;;
-        claude)   echo "claude -p" ;;
-        opencode) echo "opencode run -c" ;;
-        gemini)   echo "gemini --resume -p" ;;
-        codex)    echo "codex exec resume --last" ;;
+        lash)
+            tool_bin="$(_lacy_resolve_tool_bin lash 2>/dev/null || printf 'lash')"
+            echo "${tool_bin} run -c"
+            ;;
+        claude)
+            tool_bin="$(_lacy_resolve_tool_bin claude 2>/dev/null || printf 'claude')"
+            echo "${tool_bin} -p"
+            ;;
+        opencode)
+            tool_bin="$(_lacy_resolve_tool_bin opencode 2>/dev/null || printf 'opencode')"
+            local timeout_bin=""
+            local session_args=""
+            timeout_bin="$(_lacy_timeout_bin 2>/dev/null || true)"
+            session_args="$(lacy_preheat_opencode_build_session_args 2>/dev/null || true)"
+            if [[ -n "$timeout_bin" ]]; then
+                echo "${timeout_bin} ${LACY_OPENCODE_TIMEOUT_SEC:-45} ${tool_bin} run --format json --thinking ${session_args}"
+            else
+                echo "${tool_bin} run --format json --thinking ${session_args}"
+            fi
+            ;;
+        pi)
+            tool_bin="$(_lacy_resolve_tool_bin pi 2>/dev/null || printf 'pi')"
+            echo "${tool_bin} -p"
+            ;;
+        gemini)
+            tool_bin="$(_lacy_resolve_tool_bin gemini 2>/dev/null || printf 'gemini')"
+            echo "${tool_bin} --resume -p"
+            ;;
+        codex)
+            tool_bin="$(_lacy_resolve_tool_bin codex 2>/dev/null || printf 'codex')"
+            echo "${tool_bin} exec resume --last"
+            ;;
         *)        echo "" ;;
     esac
 }
@@ -122,8 +246,8 @@ lacy_resume_cmd() {
                 echo "lash --session $LACY_PREHEAT_SERVER_SESSION_ID"
             ;;
         opencode)
-            [[ -n "$LACY_PREHEAT_SERVER_SESSION_ID" ]] && \
-                echo "opencode --session $LACY_PREHEAT_SERVER_SESSION_ID"
+            [[ -n "$LACY_PREHEAT_OPENCODE_SESSION_ID" ]] && \
+                echo "opencode run --session $LACY_PREHEAT_OPENCODE_SESSION_ID"
             ;;
         gemini)   echo "gemini --resume" ;;
         codex)    echo "codex exec resume --last" ;;
@@ -243,7 +367,8 @@ except: pass" 2>/dev/null)
 lacy_shell_query_agent() {
     local query
     lacy_show_agent_step "Preparing request"
-    query=$(lacy_expand_references "$1")
+    lacy_expand_references "$1"
+    query="$LACY_EXPANDED_QUERY"
 
     local _ref
     for _ref in "${LACY_EXPANDED_REFS[@]}"; do
@@ -257,7 +382,7 @@ lacy_shell_query_agent() {
     local _auto_detected=false
     if [[ -z "$tool" ]]; then
         local t
-        for t in lash claude opencode gemini codex; do
+        for t in lash claude opencode pi gemini codex; do
             if command -v "$t" >/dev/null 2>&1; then
                 tool="$t"
                 _auto_detected=true
@@ -344,6 +469,7 @@ EOF
                 echo "  lash:     npm install -g lashcode"
                 echo "  claude:   brew install claude"
                 echo "  opencode: brew install opencode"
+                echo "  pi:       see https://shittycodingagent.ai/"
                 echo "  gemini:   brew install gemini"
                 echo "  codex:    npm install -g @openai/codex"
                 return 1
@@ -354,6 +480,7 @@ EOF
             echo "  npm install -g lashcode     (recommended) — lash.lacy.sh"
             echo "  brew install claude"
             echo "  brew install opencode"
+            echo "  pi                         — shittycodingagent.ai"
             echo "  brew install gemini"
             echo "  npm install -g @openai/codex"
             return 1
@@ -382,8 +509,8 @@ EOF
     fi
     lacy_show_agent_step "Querying ${tool}"
 
-    # === Preheat: lash/opencode background server ===
-    if [[ "$tool" == "lash" || "$tool" == "opencode" ]]; then
+    # === Preheat: lash background server ===
+    if [[ "$tool" == "lash" ]]; then
         if lacy_preheat_server_is_healthy || lacy_preheat_server_start "$tool"; then
             echo ""
             lacy_start_spinner
@@ -396,7 +523,7 @@ EOF
             if [[ $exit_code -eq 0 && -n "$server_result" ]]; then
                 while [[ "$server_result" == $'\n'* ]]; do server_result="${server_result#$'\n'}"; done
                 lacy_show_agent_step "Rendering response"
-                printf '%s\n' "$server_result" | lacy_render_response
+                _lacy_render_normalized_blob "$tool" "$server_result"
                 _lacy_print_resume_hint "$tool"
                 echo ""
                 return 0
@@ -412,7 +539,7 @@ EOF
         echo ""
         lacy_start_spinner
         local json_output
-        json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd "$claude_cmd" "$query" </dev/tty 2>&1)
+        json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd_with_io "$claude_cmd" "$query" true 2>&1)
         local exit_code=$?
         lacy_stop_spinner
 
@@ -429,9 +556,9 @@ EOF
             while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
             lacy_show_agent_step "Rendering response"
             if [[ -n "$result_text" ]]; then
-                printf '%s\n' "$result_text" | lacy_render_response
+                _lacy_render_normalized_blob "$tool" "$result_text"
             else
-                printf '%s\n' "$json_output" | lacy_render_response
+                _lacy_render_normalized_blob "$tool" "$json_output"
             fi
             lacy_preheat_claude_capture_session "$json_output"
             _lacy_print_resume_hint "$tool"
@@ -441,7 +568,7 @@ EOF
             lacy_preheat_claude_reset_session
             claude_cmd=$(lacy_preheat_claude_build_cmd)
             lacy_start_spinner
-            json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd "$claude_cmd" "$query" </dev/tty 2>&1)
+            json_output=$(unset CLAUDECODE; _lacy_run_tool_cmd_with_io "$claude_cmd" "$query" true 2>&1)
             exit_code=$?
             lacy_stop_spinner
 
@@ -459,9 +586,9 @@ EOF
                 while [[ "$result_text" == $'\n'* ]]; do result_text="${result_text#$'\n'}"; done
                 lacy_show_agent_step "Rendering response"
                 if [[ -n "$result_text" ]]; then
-                    printf '%s\n' "$result_text" | lacy_render_response
+                    _lacy_render_normalized_blob "$tool" "$result_text"
                 else
-                    printf '%s\n' "$json_output" | lacy_render_response
+                    _lacy_render_normalized_blob "$tool" "$json_output"
                 fi
                 lacy_preheat_claude_capture_session "$json_output"
                 _lacy_print_resume_hint "$tool"
@@ -482,42 +609,80 @@ EOF
     echo ""
     lacy_start_spinner
     lacy_show_agent_step "Waiting for response"
-    _lacy_run_tool_cmd "$cmd" "$query" </dev/tty 2>&1 | {
+    local _lacy_done_file
+    local _io_override="auto"
+    if [[ "$tool" == "opencode" ]]; then
+        _io_override="non-interactive-safe"
+    fi
+    _lacy_done_file="$(mktemp)"
+    _lacy_run_tool_cmd_with_io "$cmd" "$query" "${LACY_CUSTOM_TOOL_TTY_REQUIRED:-false}" "$_io_override" 2>&1 | {
         local _spinner_killed=false
-        local _full_output=""
+        local _spinner_detached=false
+        local _first_output_line=""
         local _line_count=0
+        local _normalized=""
+        local _done_seen=false
         _lacy_reset_render_state
         while IFS= read -r line; do
-            # Skip agent startup noise (e.g. "> build · big-pickle", "exit_code=0")
-            [[ "$line" =~ ^'> '[a-z]+' · ' ]] && continue
-            [[ "$line" =~ ^exit_code= ]] && continue
-            if ! $_spinner_killed; then
-                if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
-                    kill "$LACY_SPINNER_PID" 2>/dev/null
-                    sleep "$LACY_TERMINAL_FLUSH_DELAY"
-                    printf '\e[2K\r\e[?25h\e[?7h'
-                fi
-                _spinner_killed=true
+            if [[ "$tool" == "opencode" ]]; then
+                lacy_preheat_opencode_capture_session "$line"
             fi
-            _full_output+="$line"
             (( _line_count++ ))
-            # Only buffer first line to check for JSON errors
-            if (( _line_count > 1 )); then
-                # Multi-line output — not a JSON error blob, flush everything
-                if [[ $_line_count -eq 2 ]]; then
-                    _lacy_render_stream_line "$_full_output"
+            if (( _line_count == 1 )); then
+                _first_output_line="$line"
+            fi
+            while IFS= read -r _normalized || [[ -n "$_normalized" ]]; do
+                local _event_type=""
+                local _keep_spinner=false
+                if lacy_is_event_line "$_normalized"; then
+                    _event_type="${_normalized#${LACY_EVENT_PREFIX}}"
+                    _event_type="${_event_type%%$'\t'*}"
+                    case "$_event_type" in
+                        status|thinking_start|thinking_delta|thinking_end)
+                            _keep_spinner=true
+                            ;;
+                    esac
                 fi
-                _lacy_render_stream_line "$line"
+                if ! $_spinner_killed; then
+                    if [[ "$_keep_spinner" == "true" ]]; then
+                        if ! $_spinner_detached; then
+                            printf '\n'
+                            _spinner_detached=true
+                        fi
+                    else
+                        if [[ -n "$LACY_SPINNER_PID" ]] && kill -0 "$LACY_SPINNER_PID" 2>/dev/null; then
+                            kill "$LACY_SPINNER_PID" 2>/dev/null
+                            sleep "$LACY_TERMINAL_FLUSH_DELAY"
+                            printf '\e[2K\r\e[?25h\e[?7h'
+                        fi
+                        _spinner_killed=true
+                    fi
+                fi
+                if lacy_is_event_line "$_normalized"; then
+                    if [[ "$_event_type" == "done" ]]; then
+                        _done_seen=true
+                        printf '1' > "$_lacy_done_file"
+                        break
+                    fi
+                    _lacy_render_event_line "$_normalized"
+                else
+                    _lacy_render_stream_line "$_normalized"
+                fi
+            done < <(lacy_agent_normalize_line "$tool" "$line")
+            if [[ "$_done_seen" == "true" ]]; then
+                break
             fi
         done
+        if (( _LACY_IN_THINKING_BLOCK == 1 )); then
+            _lacy_finish_thinking_block
+        fi
         if ! $_spinner_killed && [[ -n "$LACY_SPINNER_PID" ]]; then
             kill "$LACY_SPINNER_PID" 2>/dev/null
             sleep "$LACY_TERMINAL_FLUSH_DELAY"
             printf '\e[2K\r\e[?25h\e[?7h'
         fi
-        # Single-line output — check if it's a JSON error
-        if (( _line_count <= 1 )); then
-            lacy_format_tool_error "$_full_output" "$tool" || _lacy_render_stream_line "$_full_output"
+        if (( _line_count == 1 )); then
+            lacy_format_tool_error "$_first_output_line" "$tool" >/dev/null 2>&1 || true
         fi
     }
     local exit_code
@@ -526,6 +691,10 @@ EOF
     else
         exit_code=${PIPESTATUS[0]}
     fi
+    if [[ -f "$_lacy_done_file" && "$(cat "$_lacy_done_file" 2>/dev/null)" == "1" ]]; then
+        exit_code=0
+    fi
+    rm -f "$_lacy_done_file"
     lacy_stop_spinner
     if [[ $exit_code -eq 0 ]]; then
         _lacy_print_resume_hint "$tool"

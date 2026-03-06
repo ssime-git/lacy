@@ -32,8 +32,11 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 source "$REPO_DIR/lib/core/constants.sh"
 source "$REPO_DIR/lib/core/detection.sh"
 source "$REPO_DIR/lib/core/modes.sh"
+source "$REPO_DIR/lib/core/refs.sh"
+source "$REPO_DIR/lib/core/agent_events.sh"
 source "$REPO_DIR/lib/core/history.sh"
 source "$REPO_DIR/lib/core/render.sh"
+source "$REPO_DIR/lib/core/preheat.sh"
 
 # Test counter
 PASS=0
@@ -320,9 +323,13 @@ assert_false "in_list not found" _lacy_in_list "d" "a" "b" "c"
 
 # Tool cmd lookup
 source "$REPO_DIR/lib/core/mcp.sh"
-assert_eq "tool cmd lash" "lash run -c" "$(lacy_tool_cmd 'lash')"
-assert_eq "tool cmd claude" "claude -p" "$(lacy_tool_cmd 'claude')"
+assert_true "tool cmd lash" test "$(lacy_tool_cmd 'lash' | sed 's#.*/##')" "=" "lash run -c"
+assert_true "tool cmd claude" test "$(lacy_tool_cmd 'claude' | sed 's#.*/##')" "=" "claude -p"
+assert_true "tool cmd pi" test "$(lacy_tool_cmd 'pi' | sed 's#.*/##')" "=" "pi -p"
 assert_eq "tool cmd unknown" "" "$(lacy_tool_cmd 'unknown')"
+assert_true "skip codex banner" _lacy_provider_skip_line "codex" "OpenAI Codex v0.71.0 (research preview)"
+assert_true "skip codex metadata" _lacy_provider_skip_line "codex" "workdir: /tmp/repo"
+assert_false "do not skip normal output" _lacy_provider_skip_line "codex" "Here is the answer"
 
 # ============================================================================
 # History and Reference Tests
@@ -362,11 +369,31 @@ printf 'root file\n' > "$TEST_TMPDIR/root.txt"
 
 (
     cd "$TEST_TMPDIR" || exit 1
-    expanded_refs="$(lacy_expand_references 'check @root.txt and @refdir please')"
+    git init >/dev/null 2>&1
+    git config user.email test@example.com
+    git config user.name test
+    git add root.txt refdir/file.txt refdir/nested/inner.txt
+    git commit -m "init" >/dev/null 2>&1
+    printf 'root file\nsecond line changed\n' > "$TEST_TMPDIR/root.txt"
+    lacy_expand_references 'check @root.txt and @refdir please'
+    expanded_refs="$LACY_EXPANDED_QUERY"
     assert_contains "file ref metadata" "$expanded_refs" "FILE @root.txt"
     assert_contains "dir ref metadata" "$expanded_refs" "DIRECTORY @refdir"
     assert_contains "dir entry listing" "$expanded_refs" "refdir/nested/inner.txt"
     assert_contains "query preserved after refs" "$expanded_refs" "check @root.txt and @refdir please"
+    assert_contains "expanded refs state includes file" "${LACY_EXPANDED_REFS[*]}" "file:root.txt"
+    assert_contains "expanded refs state includes dir" "${LACY_EXPANDED_REFS[*]}" "dir:refdir"
+    assert_contains "file ref preview lines" "$expanded_refs" "Preview ("
+    assert_not_contains "file ref no raw full dump marker" "$expanded_refs" "alpha"$'\n'"beta"$'\n'"gamma"
+    assert_contains "file ref includes diff" "$expanded_refs" "Diff:"
+    assert_contains "diff contains changed line" "$expanded_refs" "+second line changed"
+
+    scan_refs="$(lacy_ref_scan 'look at @root.txt, @"refdir/nested/inner.txt" and @refdir please')"
+    assert_contains "scan sees root file" "$scan_refs" $'\t@root.txt\troot.txt'
+    assert_contains "scan sees quoted path" "$scan_refs" $'\t@"refdir/nested/inner.txt"\trefdir/nested/inner.txt'
+
+    cursor_ref="$(lacy_ref_token_at_cursor 'look at @root.txt and @refdir' 18)"
+    assert_contains "cursor resolves active ref" "$cursor_ref" $'\t@root.txt\troot.txt'
 )
 
 # ============================================================================
@@ -382,9 +409,71 @@ assert_contains "thinking header rendered" "$rendered_output" "Thinking"
 assert_contains "todo rendered unchecked" "$rendered_output" "☐ todo item"
 assert_contains "todo rendered checked" "$rendered_output" "☑ done item"
 
+event_output="$(printf '%s\n' \
+    $'LACY_EVENT\tstatus\tPreparing request' \
+    $'LACY_EVENT\tthinking_start' \
+    $'LACY_EVENT\tthinking_delta\tstep 1' \
+    $'LACY_EVENT\tthinking_end' \
+    $'LACY_EVENT\ttodo_item\tunchecked\tinspect request' \
+    $'LACY_EVENT\ttodo_item\tunchecked\tread file' \
+    $'LACY_EVENT\ttodo_item\tchecked\tinspect request' \
+    $'LACY_EVENT\ttodo_item\tchecked\tdone item' \
+    $'LACY_EVENT\taction_start\tread_file\tREADME.md' \
+    $'LACY_EVENT\taction_result\tread_file\tok\t42 lines' \
+    $'LACY_EVENT\tfinal_text\tplain response' | lacy_render_response)"
+event_output_plain="$(strip_ansi "$event_output")"
+assert_contains "event status rendered" "$event_output_plain" "Preparing request"
+assert_contains "event thinking rendered" "$event_output_plain" "Thinking"
+assert_contains "event todo updated rendered checked" "$event_output_plain" "☑ inspect request"
+assert_contains "event second todo rendered" "$event_output_plain" "☐ read file"
+assert_contains "event todo checked rendered" "$event_output_plain" "☑ done item"
+assert_contains "event action rendered" "$event_output_plain" "read_file [ok]: 42 lines"
+assert_contains "event final text rendered" "$event_output_plain" "plain response"
+assert_contains "event todo redraw uses cursor controls" "$event_output" $'\033[1A\033[2K\r'
+
 non_thinking_output="$(printf '%s\n' 'plain response' | lacy_render_response)"
 non_thinking_output="$(strip_ansi "$non_thinking_output")"
 assert_eq "plain response unchanged" "plain response" "$non_thinking_output"
+
+normalized_json="$(printf '%s\n' '{"type":"todo_item","state":"checked","text":"json todo"}' | lacy_agent_normalize_stream opencode)"
+assert_contains "json event normalized" "$normalized_json" $'LACY_EVENT\ttodo_item\tchecked\tjson todo'
+
+opencode_payload='{"info":{"finish":"stop"},"parts":[{"type":"reasoning","text":"Analyze it"},{"type":"text","text":"hello"},{"type":"step-finish","reason":"stop"}]}'
+normalized_opencode="$(printf '%s\n' "$opencode_payload" | lacy_agent_normalize_stream opencode)"
+assert_contains "opencode reasoning starts thinking" "$normalized_opencode" $'LACY_EVENT\tthinking_start'
+assert_contains "opencode reasoning normalized" "$normalized_opencode" $'LACY_EVENT\tthinking_delta\tAnalyze it'
+assert_contains "opencode text normalized" "$normalized_opencode" $'LACY_EVENT\tfinal_text\thello'
+assert_contains "opencode terminal event normalized" "$normalized_opencode" $'LACY_EVENT\tdone'
+assert_not_contains "opencode reasoning stays open until non-thinking event" "$normalized_opencode" $'LACY_EVENT\tthinking_end'
+
+opencode_rendered="$(printf '%s\n' "$normalized_opencode" | lacy_render_response)"
+opencode_rendered="$(strip_ansi "$opencode_rendered")"
+assert_contains "opencode thinking rendered" "$opencode_rendered" "Analyze it"
+assert_contains "opencode final text rendered outside thinking" "$opencode_rendered" "hello"
+
+todowrite_payload='{"type":"tool_use","part":{"tool":"todowrite","metadata":{"todos":[{"content":"inspect request","status":"in_progress"},{"content":"read file","status":"pending"},{"content":"done item","status":"completed"}]},"state":{"output":"[{\"content\":\"inspect request\",\"status\":\"in_progress\"},{\"content\":\"read file\",\"status\":\"pending\"},{\"content\":\"done item\",\"status\":\"completed\"}]"}}}'
+normalized_todowrite="$(printf '%s\n' "$todowrite_payload" | lacy_agent_normalize_stream opencode)"
+assert_contains "todowrite emits in-progress todo as unchecked" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tunchecked\tinspect request'
+assert_contains "todowrite emits unchecked todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tunchecked\tread file'
+assert_contains "todowrite emits completed todo" "$normalized_todowrite" $'LACY_EVENT\ttodo_item\tchecked\tdone item'
+
+read_payload='{"type":"tool_use","part":{"tool":"read","title":"lib/core/mcp.sh","state":{"status":"completed","input":{"filePath":"/tmp/lib/core/mcp.sh"},"output":"<content>huge file</content>"}}}'
+normalized_read="$(printf '%s\n' "$read_payload" | lacy_agent_normalize_stream opencode)"
+assert_contains "read emits action start" "$normalized_read" $'LACY_EVENT\taction_start\tread'
+assert_contains "read emits summarized action result" "$normalized_read" $'LACY_EVENT\taction_result\tread\tcompleted\tlib/core/mcp.sh'
+assert_not_contains "read does not emit full content" "$normalized_read" "<content>huge file</content>"
+
+TEST_TMP_HOME="$(mktemp -d)"
+LACY_SHELL_HOME="$TEST_TMP_HOME"
+LACY_PREHEAT_OPENCODE_SESSION_FILE="$TEST_TMP_HOME/.opencode_session_id"
+LACY_PREHEAT_OPENCODE_SESSION_ID=""
+lacy_preheat_opencode_capture_session '{"type":"step_start","sessionID":"ses_abc123","part":{"type":"step-start"}}'
+assert_eq "opencode session captured" "ses_abc123" "$LACY_PREHEAT_OPENCODE_SESSION_ID"
+assert_contains "opencode session args include session id" "$(lacy_preheat_opencode_build_session_args)" "--session ses_abc123"
+LACY_PREHEAT_OPENCODE_SESSION_ID=""
+lacy_preheat_opencode_restore_session
+assert_eq "opencode session restored from file" "ses_abc123" "$LACY_PREHEAT_OPENCODE_SESSION_ID"
+rm -rf "$TEST_TMP_HOME"
 
 step_output="$(lacy_show_agent_step 'Preparing request')"
 step_output="$(strip_ansi "$step_output")"

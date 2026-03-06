@@ -120,6 +120,7 @@ const TOOLS = [
   { value: "lash", label: "lash", hint: "AI coding agent — lash.lacy.sh (recommended)" },
   { value: "claude", label: "claude", hint: "Claude Code CLI" },
   { value: "opencode", label: "opencode", hint: "OpenCode CLI" },
+  { value: "pi", label: "pi", hint: "Pi coding agent CLI" },
   { value: "gemini", label: "gemini", hint: "Google Gemini CLI" },
   { value: "codex", label: "codex", hint: "OpenAI Codex CLI" },
   { value: "custom", label: "Custom", hint: "enter your own command" },
@@ -367,7 +368,7 @@ async function install() {
 
   // Detect installed tools
   let detected = [];
-  for (const tool of ["lash", "claude", "opencode", "gemini", "codex"]) {
+  for (const tool of ["lash", "claude", "opencode", "pi", "gemini", "codex"]) {
     if (commandExists(tool)) {
       detected.push(tool);
     }
@@ -603,7 +604,7 @@ async function install() {
 # https://github.com/lacymorrow/lacy
 
 # AI CLI tool selection
-# Options: lash, claude, opencode, gemini, codex, custom, or empty for auto-detect
+# Options: lash, claude, opencode, pi, gemini, codex, custom, or empty for auto-detect
 agent_tools:
   active: ${activeToolValue}
 ${customCommandLine}
@@ -730,7 +731,7 @@ ${pc.dim("https://github.com/lacymorrow/lacy")}
     const active = readConfigValue("active");
     const mode = readConfigValue("default");
     const detected = [];
-    for (const tool of ["lash", "claude", "opencode", "gemini", "codex"]) {
+    for (const tool of ["lash", "claude", "opencode", "pi", "gemini", "codex"]) {
       if (commandExists(tool)) detected.push(tool);
     }
 
@@ -891,7 +892,7 @@ ${pc.dim("https://github.com/lacymorrow/lacy")}
           `  Mode:       ${pc.cyan(modeDisplay)}`,
           ``,
           `  ${pc.bold("AI CLI tools:")}`,
-          ...["lash", "claude", "opencode", "gemini", "codex"].map((t) =>
+          ...["lash", "claude", "opencode", "pi", "gemini", "codex"].map((t) =>
             commandExists(t)
               ? `    ${pc.green("✓")} ${t}`
               : `    ${pc.dim("○")} ${pc.dim(t)}`,

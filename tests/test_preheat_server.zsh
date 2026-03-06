@@ -24,7 +24,11 @@ export LACY_PREHEAT_SERVER_PORT="$TEST_PORT"
 
 source "$REPO_ROOT/lib/constants.zsh"
 source "$REPO_ROOT/lib/spinner.zsh"
+source "$REPO_ROOT/lib/core/refs.sh"
+source "$REPO_ROOT/lib/core/agent_events.sh"
 source "$REPO_ROOT/lib/mcp.zsh"
+source "$REPO_ROOT/lib/core/render.sh"
+source "$REPO_ROOT/lib/core/history.sh"
 source "$REPO_ROOT/lib/preheat.zsh"
 
 # ============================================================================
@@ -130,10 +134,12 @@ create_mock_server() {
     local mock_bin="$TEST_TMPDIR/bin/$tool"
     mkdir -p "$TEST_TMPDIR/bin"
 
-    cat > "$mock_bin" << 'MOCK_SERVER'
+    cat > "$mock_bin" << MOCK_SERVER
 #!/usr/bin/env python3
 """Fast mock server mimicking lash/opencode REST API using raw sockets."""
 import socket, json, sys, uuid, threading
+
+TOOL = "${tool}"
 
 if "serve" not in sys.argv:
     print(f"Unknown command: {sys.argv[1:]}", file=sys.stderr)
@@ -181,10 +187,21 @@ def handle_client(conn):
                         qt = p["text"]
                 sessions[sid].append(qt)
                 status_code = 200
-                resp_body = json.dumps([{
-                    "role": "assistant",
-                    "parts": [{"type": "text", "text": f"Mock response to: {qt}"}]
-                }])
+                if TOOL == "opencode":
+                    resp_body = json.dumps([
+                        {"type": "status", "message": "Preparing request"},
+                        {"type": "thinking_start"},
+                        {"type": "thinking_delta", "text": "Analyzing prompt"},
+                        {"type": "thinking_end"},
+                        {"type": "todo_item", "state": "checked", "text": "mock task complete"},
+                        {"type": "action_result", "name": "read_file", "status": "ok", "summary": "README.md"},
+                        {"type": "final_text", "text": f"Mock response to: {qt}"}
+                    ])
+                else:
+                    resp_body = json.dumps([{
+                        "role": "assistant",
+                        "parts": [{"type": "text", "text": f"Mock response to: {qt}"}]
+                    }])
             # else: 404 (default)
 
         status_text = "OK" if status_code == 200 else "Not Found"
@@ -414,6 +431,13 @@ run_tests_for_tool() {
     assert_eq "$tool: mcp integration returns 0" "0" "$mcp_rc"
     assert_nonblank "$tool: mcp integration returns text" "$mcp_result"
     assert_nonblank "$tool: server PID set during integration" "$LACY_PREHEAT_SERVER_PID"
+    if [[ "$tool" == "opencode" ]]; then
+        if [[ "$mcp_result" == *"Thinking"* && "$mcp_result" == *"☑ mock task complete"* && "$mcp_result" == *"read_file [ok]: README.md"* ]]; then
+            pass "$tool: structured events rendered"
+        else
+            fail "$tool: structured events rendered" "$mcp_result"
+        fi
+    fi
 
     # Clean up for next tool
     reset_preheat_state

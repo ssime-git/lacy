@@ -78,6 +78,7 @@ Lacy auto-detects your installed AI CLI. All tools handle their own auth — no 
 ```bash
 tool set claude    # Use Claude Code
 tool set lash      # Use Lash
+tool set pi        # Use Pi
 tool set auto      # Auto-detect (first available)
 ```
 
@@ -85,7 +86,7 @@ Or edit `~/.lacy/config.yaml`:
 
 ```yaml
 agent_tools:
-  active: claude # lash, claude, opencode, gemini, codex, custom, or empty for auto
+  active: claude # lash, claude, opencode, pi, gemini, codex, custom, or empty for auto
 ```
 
 ## Commands
@@ -129,7 +130,7 @@ Config file: `~/.lacy/config.yaml`
 
 ```yaml
 agent_tools:
-  active: claude # lash, claude, opencode, gemini, codex, or empty for auto
+  active: claude # lash, claude, opencode, pi, gemini, codex, or empty for auto
 
 modes:
   default: auto # shell, agent, auto
@@ -141,7 +142,7 @@ api_keys:
 
 ## Troubleshooting
 
-**No AI response** — Check `tool` to see if a tool is detected. Install one: `npm i -g lashcode` or `brew install claude`.
+**No AI response** — Check `tool` to see if a tool is detected. Install one: `npm i -g lashcode`, `brew install claude`, or see [Pi](https://shittycodingagent.ai/).
 
 **Colors not showing** — Ensure your terminal supports 256 colors (green=34, magenta=200, blue=75).
 
